@@ -1,0 +1,15 @@
+build/
+CMakeFiles/
+CMakeCache.txt
+compile_commands.json
+*.o
+*.obj
+.cache/
+
+# Dev-process / spec files kept out of the public repo
+CLAUDE.md
+PROGRESS.md
+tasks.md
+specs/
+.claude/
+*:Zone.Identifier
