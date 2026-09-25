@@ -5,6 +5,9 @@ compile_commands.json
 *.o
 *.obj
 .cache/
+generated/
+PHASE2_RESULTS.md
+phase2_context.md
 
 # Dev-process / spec files kept out of the public repo
 CLAUDE.md

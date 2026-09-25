@@ -1,16 +1,23 @@
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <sstream>
 
 #include "parallix/ast.h"
+#include "parallix/codegen.h"
+#include "parallix/compiler_driver.h"
 #include "parallix/dependence.h"
+#include "parallix/harness.h"
 #include "parallix/lexer.h"
 #include "parallix/lowering.h"
 #include "parallix/parser.h"
+#include "parallix/schedule.h"
 #include "parallix/sema.h"
 
-// The CLI driver: lex -> parse -> sema -> lower to PIR -> dependence
-// analysis, printing exactly the output contract in specs/05-phase1-plan.md.
+// The CLI driver: lex -> parse -> sema -> lower to PIR -> dependence analysis
+// -> schedule -> codegen -> compile+run -> certificate, printing exactly the
+// output contract in specs/05-phase1-plan.md (Phase 1 sections) and
+// specs/06-phase2-plan.md section 5 (Phase 2 sections).
 
 namespace parallix {
 namespace {
@@ -198,6 +205,58 @@ void RunKernel(const KernelDecl& kernel_ast, const std::vector<Token>& tokens) {
 
   std::cout << "PARALLELIZATION: " << ToString(report.verdict) << ", " << report.verdict_reason
             << "\n";
+
+  // --- Phase 2: schedule -> codegen -> harness -> compile+run -> certificate.
+  Schedule schedule = GenerateSchedule(pir, report);
+  std::cout << "SCHEDULE: " << ToString(schedule.kind) << " -- " << schedule.reason << "\n";
+
+  CodegenResult gen = GenerateCCode(kernel_ast, pir, schedule);
+  HarnessResult harness = GenerateHarness(kernel_ast, pir, schedule, gen);
+
+  std::filesystem::create_directories("generated");
+  std::string c_path = "generated/" + kernel_ast.name + "_test.c";
+  std::string bin_path = "generated/" + kernel_ast.name + "_test";
+  {
+    std::ofstream out(c_path);
+    out << harness.c_source;
+  }
+  std::cout << "GENERATED CODE: " << c_path << " (compiles to " << bin_path << ")\n";
+
+  CompileRunResult cr = CompileAndRun(c_path, bin_path);
+  std::ostringstream exec;
+  if (!cr.error.empty()) {
+    exec << "FAILED -- " << cr.error;
+  } else if (cr.ran) {
+    exec << "compiled with '" << cr.compiler_used << "' and ran successfully (exit code "
+         << cr.exit_code << ")";
+  } else {
+    exec << "compiled but did not run";
+  }
+  std::cout << "EXECUTION: " << exec.str() << "\n";
+
+  std::ostringstream cert;
+  if (schedule.kind == ScheduleKind::SEQUENTIAL_ONLY) {
+    cert << "not attempted - UNSAFE";
+  } else if (!cr.error.empty() || cr.exit_code != 0) {
+    cert << "not obtained -- execution did not complete successfully";
+  } else {
+    size_t pos = cr.run_output.find("CERTIFICATE");
+    if (pos == std::string::npos) {
+      cert << "not found in program output (harness ran but printed no certificate line)";
+    } else {
+      // The harness's own stdout already starts its line with "CERTIFICATE:
+      // ..." (or "CERTIFICATE MISMATCH: ..."); strip that so the CLI's own
+      // "CERTIFICATE: " label isn't doubled.
+      size_t end = cr.run_output.find('\n', pos);
+      std::string line = cr.run_output.substr(pos, end == std::string::npos ? std::string::npos
+                                                                             : end - pos);
+      size_t colon = line.find(':');
+      std::string rest = colon == std::string::npos ? line : line.substr(colon + 1);
+      size_t first_non_space = rest.find_first_not_of(' ');
+      cert << (first_non_space == std::string::npos ? rest : rest.substr(first_non_space));
+    }
+  }
+  std::cout << "CERTIFICATE: " << cert.str() << "\n";
 }
 
 }  // namespace

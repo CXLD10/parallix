@@ -21,6 +21,10 @@ add_executable(parallix_tests
   test_sema.cpp
   test_lowering.cpp
   test_dependence.cpp
+  test_schedule.cpp
+  test_codegen.cpp
+  test_harness.cpp
+  test_integration.cpp
 )
 target_link_libraries(parallix_tests PRIVATE parallix_core gtest_main)
 

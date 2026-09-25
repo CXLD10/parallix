@@ -14,6 +14,10 @@ add_library(parallix_core
   sema/sema.cpp
   ir/lowering.cpp
   dependence/dependence.cpp
+  schedule/schedule.cpp
+  codegen/codegen.cpp
+  harness/harness.cpp
+  compiler_driver/compiler_driver.cpp
 )
 target_include_directories(parallix_core PUBLIC ${CMAKE_SOURCE_DIR}/include)
 
