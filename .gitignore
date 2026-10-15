@@ -6,13 +6,10 @@ compile_commands.json
 *.obj
 .cache/
 generated/
-PHASE2_RESULTS.md
-phase2_context.md
-
-# Dev-process / spec files kept out of the public repo
-CLAUDE.md
-PROGRESS.md
-tasks.md
-specs/
-.claude/
+docs-private/
 *:Zone.Identifier
+dist/
+build-san/
+build-*/
+results/**/artifacts*/
+demo-out/

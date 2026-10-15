@@ -1,0 +1,5 @@
+build/
+build-san/
+generated/
+demo-out/
+.git/
