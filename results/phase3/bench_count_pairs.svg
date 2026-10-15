@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720.0 440.0" font-family="system-ui, sans-serif" font-size="12">
+<rect width="720.0" height="440.0" fill="#fcfcfb"/>
+<text x="64.0" y="26" font-size="15" font-weight="600" fill="#1a1a19">Speedup vs threads: count_pairs</text>
+<text x="64.0" y="44" fill="#55554f">median of 5 runs; 20 logical CPUs; dashed = ideal linear speedup</text>
+<line x1="64.0" x2="590.0" y1="376.0" y2="376.0" stroke="#e4e4e0" stroke-width="1"/>
+<text x="56.0" y="380.0" text-anchor="end" fill="#55554f">0x</text>
+<line x1="64.0" x2="590.0" y1="344.8" y2="344.8" stroke="#e4e4e0" stroke-width="1"/>
+<text x="56.0" y="348.8" text-anchor="end" fill="#55554f">1x</text>
+<line x1="64.0" x2="590.0" y1="313.6" y2="313.6" stroke="#e4e4e0" stroke-width="1"/>
+<text x="56.0" y="317.6" text-anchor="end" fill="#55554f">2x</text>
+<line x1="64.0" x2="590.0" y1="282.4" y2="282.4" stroke="#e4e4e0" stroke-width="1"/>
+<text x="56.0" y="286.4" text-anchor="end" fill="#55554f">3x</text>
+<line x1="64.0" x2="590.0" y1="251.2" y2="251.2" stroke="#e4e4e0" stroke-width="1"/>
+<text x="56.0" y="255.2" text-anchor="end" fill="#55554f">4x</text>
+<line x1="64.0" x2="590.0" y1="220.0" y2="220.0" stroke="#e4e4e0" stroke-width="1"/>
+<text x="56.0" y="224.0" text-anchor="end" fill="#55554f">5x</text>
+<line x1="64.0" x2="590.0" y1="188.8" y2="188.8" stroke="#e4e4e0" stroke-width="1"/>
+<text x="56.0" y="192.8" text-anchor="end" fill="#55554f">6x</text>
+<line x1="64.0" x2="590.0" y1="157.6" y2="157.6" stroke="#e4e4e0" stroke-width="1"/>
+<text x="56.0" y="161.6" text-anchor="end" fill="#55554f">7x</text>
+<line x1="64.0" x2="590.0" y1="126.4" y2="126.4" stroke="#e4e4e0" stroke-width="1"/>
+<text x="56.0" y="130.4" text-anchor="end" fill="#55554f">8x</text>
+<line x1="64.0" x2="590.0" y1="95.2" y2="95.2" stroke="#e4e4e0" stroke-width="1"/>
+<text x="56.0" y="99.2" text-anchor="end" fill="#55554f">9x</text>
+<line x1="64.0" x2="590.0" y1="64.0" y2="64.0" stroke="#e4e4e0" stroke-width="1"/>
+<text x="56.0" y="68.0" text-anchor="end" fill="#55554f">10x</text>
+<text x="90.3" y="394.0" text-anchor="middle" fill="#55554f">1</text>
+<text x="116.6" y="394.0" text-anchor="middle" fill="#55554f">2</text>
+<text x="169.2" y="394.0" text-anchor="middle" fill="#55554f">4</text>
+<text x="274.4" y="394.0" text-anchor="middle" fill="#55554f">8</text>
+<text x="484.8" y="394.0" text-anchor="middle" fill="#55554f">16</text>
+<text x="590.0" y="394.0" text-anchor="middle" fill="#55554f">20</text>
+<text x="327.0" y="426.0" text-anchor="middle" fill="#1a1a19">threads</text>
+<line x1="90.3" y1="344.8" x2="327.0" y2="64.0" stroke="#8a8a84" stroke-width="1" stroke-dasharray="4 4"/>
+<polyline fill="none" stroke="#0072B2" stroke-width="2" points="90.3,341.226 116.6,318.637 169.2,260.26 274.4,202.271 484.8,122.938 590,101.315 "/>
+<circle cx="90.3" cy="341.2" r="4.5" fill="#0072B2" stroke="#fcfcfb" stroke-width="2"/>
+<circle cx="116.6" cy="318.6" r="4.5" fill="#0072B2" stroke="#fcfcfb" stroke-width="2"/>
+<circle cx="169.2" cy="260.3" r="4.5" fill="#0072B2" stroke="#fcfcfb" stroke-width="2"/>
+<circle cx="274.4" cy="202.3" r="4.5" fill="#0072B2" stroke="#fcfcfb" stroke-width="2"/>
+<circle cx="484.8" cy="122.9" r="4.5" fill="#0072B2" stroke="#fcfcfb" stroke-width="2"/>
+<circle cx="590.0" cy="101.3" r="4.5" fill="#0072B2" stroke="#fcfcfb" stroke-width="2"/>
+<text x="600.0" y="105.3" fill="#1a1a19">n=160000</text>
+<line x1="64.0" x2="82.0" y1="58" y2="58" stroke="#0072B2" stroke-width="2"/><text x="88.0" y="62" fill="#1a1a19">n=160000</text>
+<line x1="64.0" x2="590.0" y1="376.0" y2="376.0" stroke="#8a8a84"/>
+</svg>

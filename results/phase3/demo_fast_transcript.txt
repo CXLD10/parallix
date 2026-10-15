@@ -1,0 +1,162 @@
+Parallix -- a compiler that checks its own parallelization verdicts
+
+Two kernels. One can be parallelized and one cannot. Parallix has to say which, say why,
+and then try to prove itself wrong.
+
+PART A: a parallelizable O(n^2) problem
+=======================================
+
+Count the pairs (i < j) with a[i] + a[j] == target, by brute force. The inner loop is
+triangular (j starts at i+1) and the result is an integer count.
+$ cat examples/count_pairs.plx
+    // Demo A - count pairs (i < j) with a[i] + a[j] == target, brute force.
+    // Triangular inner loop, integer count reduction. Still O(n^2): parallelism
+    // divides the constant factor, it does not change the complexity.
+    // Expected verdict: SAFE_AS_REDUCTION.
+    kernel count_pairs(a: i32[N], target: i32) -> count: i64 {
+        reduce(+) i in 0..N {
+            auto j in i+1..N {
+                count += select(a[i] + a[j] == target, 1, 0)
+            }
+        }
+    }
+
+Step 1 -- analysis. Parallix compares every pair of array references with a GCD test and
+distance analysis it implements itself. Both references read 'a', so nothing conflicts; the only
+carried dependence is the count accumulator, which is a licensed reduction.
+$ parallix analyze examples/count_pairs.plx --size 160000
+LOOP ANALYSIS: 2 loops -- i (seq) in [0, N); j (auto) in [i + 1, N)
+DEPENDENCE ANALYSIS: comparing 1 reference pair(s): a[i](read) vs a[j](read): both references read 'a' -> independent (Step 1)
+PARALLELIZATION: SAFE_AS_REDUCTION, the only loop-carried dependence is on the scalar accumulator 'count', combined exclusively with its declared operator '+' inside reduce(+) { } (Step 5) — licensed as a parallel reduction, ass
+SCHEDULE: parallel-reduction -- SAFE_AS_REDUCTION verdict: parallelize the reduction loop 'i' with an OpenMP reduction(+:count) clause
+COST MODEL: profitable at N=160000: estimated 23.47 s sequential vs 1.38 s on 20 threads (fork/join overhead 42.0 us; break-even work 56.7 us)
+
+Step 2 -- why. Each loop gets a rule, the evidence, and the alternatives that were rejected.
+$ parallix explain examples/count_pairs.plx --size 160000 --out demo-out
+EXPLANATION for kernel 'count_pairs'
+  verdict : SAFE_AS_REDUCTION -- the only loop-carried dependence is on the scalar accumulator 'count', combined exclusively with its declared operator '+' inside reduce(+) { } (Step 5) — licensed as a parallel reduction, assuming operator associativity (note: floating-point + reduction may reorder rounding, so results may not be bit-exact across schedules)
+  schedule: parallel-reduction -- SAFE_AS_REDUCTION verdict: parallelize the reduction loop 'i' with an OpenMP reduction(+:count) clause
+  note    : loop 'i' is marked `seq` in the source; the analysis proved it safe and parallelizes it
+
+LOOP i   [seq i in [0, N)]
+  outcome : parallelized (OpenMP, recommended 20 threads)
+  rule    : R-REDUCTION -- SAFE_AS_REDUCTION: the only carried dependence is an associative accumulation; parallelize the reduction loop with a reduction clause.
+  evidence: a[i](read) vs a[j](read): both references read 'a' -> independent (Step 1)
+  evidence: verdict: SAFE_AS_REDUCTION -- the only loop-carried dependence is on the scalar accumulator 'count', combined exclusively with its declared operator '+' inside reduce(+) { } (Step 5) — licensed as a parallel reduction, assuming operator associativity (note: floating-point + reduction may reorder rounding, so results may not be bit-exact across schedules)
+  evidence: cost model at the chosen size: 12803040000 body executions x 5.5 cycles each
+  evidence: profitable at N=160000: estimated 23.47 s sequential vs 1.38 s on 20 threads (fork/join overhead 42.0 us; break-even work 56.7 us)
+  evidence: schedule(dynamic, 4): an inner bound depends on 'i', so iterations carry unequal work and static chunks would unbalance the threads
+  rejected: atomic / critical update of 'count' -- serializes every update; a reduction clause keeps a private partial per thread and combines once
+  rejected: parallelize inner loop 'j' instead -- would open a parallel region once per outer iteration, paying fork/join each time
+  rejected: collapse / tile the nest -- not implemented in this version
+  rejected: static schedule -- iterations are unequal; the thread holding the first chunk would do about twice the average work
+
+LOOP j   [auto j in [i + 1, N)]
+  outcome : kept sequential (inside each thread's iterations)
+  rule    : R-INNER-SEQ -- Only the outermost loop is parallelized; inner loops run sequentially within each iteration of it.
+  evidence: outer loop 'i' already supplies the parallelism
+  rejected: parallelize 'j' as well -- nested parallel regions add overhead without extra useful parallelism
+
+HTML REPORT: results/phase3/artifacts-fast/count_pairs.explain.html
+
+Step 3 -- try to break it. Parallix runs the sequential code, the loop in reversed order and
+in seeded random orders, then the parallel code on 1, 2, 4, 8 and all threads, 20 times each,
+across several seeds and sizes that are not multiples of the thread count. If the loop were really
+order-independent, nothing should ever differ.
+$ parallix verify examples/count_pairs.plx --out demo-out --cert demo-out/count_pairs.cert.json
+VERDICT: SAFE_AS_REDUCTION -- the only loop-carried dependence is on the scalar accumulator 'count', combined exclusively with its declared operator '+' inside reduce(+) { } (Step 5) — licensed as a parallel reduction, assuming operator associativity (note: floating-point + reduction may reorder rounding, so results may not be bit-exact across schedules)
+GENERATED CODE: results/phase3/artifacts-fast/count_pairs_harness.c
+EXECUTION: compiled with 'cc' (cc (Ubuntu 11.4.0-1ubuntu1~22.04.3) 11.4.0), OpenMP enabled
+CERTIFICATE FILE: results/phase3/artifacts-fast/count_pairs.cert.json
+VALIDATION: order independence -- reversed + 3 seeded permutations of loop 'i' x 3 sizes (37,101,257) x 3 seeds (1,2,3) = 36 runs, 0 mismatches
+VALIDATION: parallel -- threads 1,2,4,8,20 (machine max 20) x 20 repetitions x 3 sizes x 3 seeds = 900 runs, 0 mismatches
+VALIDATION: ThreadSanitizer -- skipped: ThreadSanitizer cannot judge OpenMP programs on this toolchain: its race-free control program already fails (exit 66: FATAL: ThreadSanitizer: unexpected memory mapping 0x635ba6ce4000-0x635ba6ce5000)
+CERTIFICATE: count_pairs STATICALLY SAFE, EMPIRICALLY CORROBORATED
+  verdict SAFE_AS_REDUCTION; 936 runs over 3 sizes, 3 seeds, 5 thread counts, 4 iteration orders, 20 repetitions each. Evidence for these inputs, not a proof for all inputs.
+
+Step 4 -- the certificate is a file, and a separate small checker re-verifies it without
+trusting the compiler: it recomputes the source hash and re-derives why the loop is safe.
+$ parallix check-cert demo-out/count_pairs.cert.json --source examples/count_pairs.plx
+  ok    format parallix-certificate v1
+  ok    embedded source text matches its sha256
+  ok    on-disk source file matches the certificate hash
+  ok    verdict SAFE_AS_REDUCTION is consistent with status CORROBORATED
+  ok    every referenced array is subscripted in the source text
+  ok    absence of dependence re-derived: every pair is independent (different array, both reads, GCD, or confined to one iteration) and every write depends on the parallel index
+  ok    run counts and mismatch counts equal the sums over the recorded cells
+  ok    status agrees with the recorded mismatches
+  note  recorded test runs are reported, not re-executed; this check re-derives only the hash, the witness arithmetic and the independence claims
+CERTIFICATE VALID
+
+Step 5 -- is it actually faster? Median of 5 runs, sequential vs parallel, measured now.
+
+Be clear about what this is: the algorithm is still O(n^2). Parallelization divides the
+constant factor across cores; it does not change the complexity.
+$ parallix bench examples/count_pairs.plx --sizes 160000 --threads 4,20 --scalar target=100 --out demo-out
+kernel count_pairs on 13th Gen Intel(R) Core(TM) i7-13650HX (20 logical CPUs)
+size        variant threads      median (s)     speedup  efficiency  check
+160000      seq     1              4.300943       1.00x        100%  ok
+160000      par     4              1.075461       4.00x        100%  ok
+160000      par     20             0.483613       8.89x         44%  ok
+model @ size 160000: predicted sequential 23472240 us, measured 4300943 us; recommends 20 threads (profitable)
+CSV: results/phase3/artifacts-fast/count_pairs.bench.csv
+CHART: results/phase3/artifacts-fast/count_pairs.bench.svg
+
+The speedup curve flattens past the number of fast cores: that is the machine, not the compiler.
+
+PART B: a problem that must NOT be parallelized
+===============================================
+
+Climbing stairs: dp[i] = dp[i-1] + dp[i-2]. Each step needs the two before it.
+$ cat examples/climbing_stairs.plx
+    // Demo B - climbing stairs / Fibonacci DP: dp[i] = dp[i-1] + dp[i-2].
+    // dp is read and written in place, so dp[0] and dp[1] are the base cases
+    // supplied by the caller (set both to 1 for the classic stair-climbing count).
+    // Integer arithmetic wraps on overflow.
+    // Expected verdict: UNSAFE (loop-carried RAW at distances 1 and 2).
+    kernel climbing_stairs(dp: i32[N]) -> dp: i32[N] {
+        auto i in 2..N {
+            dp[i] = dp[i-1] + dp[i-2]
+        }
+    }
+
+Step 1 -- analysis. The write dp[i] and the reads dp[i-1], dp[i-2] hit the same elements in
+DIFFERENT iterations: a loop-carried read-after-write at distances 1 and 2.
+$ parallix analyze examples/climbing_stairs.plx
+LOOP ANALYSIS: 1 loop -- i (auto) in [2, N)
+DEPENDENCE ANALYSIS: comparing 3 reference pair(s): dp[i](write) vs dp[i - 1](read): same array 'dp', GCD test admits a solution in every dimension (Step 2); unit-coefficient case: distance = b1 - b2 = 0 - -1 = 1 (Step 3); classified as RAW (Step 4); dp[i](write) vs dp[i - 2](read): same array 'dp', GCD test admits a solution in
+PARALLELIZATION: UNSAFE, at least one loop-carried array dependence was found that is not a licensed reduction
+SCHEDULE: sequential-only -- UNSAFE verdict: there is nothing safe to parallelize and nothing to corroborate, so no parallel variant is generated for this kernel
+
+No parallel code is generated. But a verdict is just a claim -- so Parallix tries to produce
+a concrete counterexample from the two conflicting iterations it found.
+
+Step 2 -- counterexample. First, deterministically: run the same loop in reversed order and
+show where the answer changes. Second, for illustration only, force the parallel version anyway and
+count how often it disagrees with sequential. That second result is nondeterministic and is not the
+proof; the reversed-order divergence is.
+$ parallix verify examples/climbing_stairs.plx --force-parallel --out demo-out --cert demo-out/climbing_stairs.cert.json
+VERDICT: UNSAFE -- at least one loop-carried array dependence was found that is not a licensed reduction
+SCHEDULE: sequential-only -- no parallel code is generated for this kernel
+CERTIFICATE FILE: results/phase3/artifacts-fast/climbing_stairs.cert.json
+WITNESS: loop-carried RAW on 'dp': iteration (i=2) writes dp[2] via dp[i](write); iteration (i=3) reads the same element via dp[i - 1](read). Sequentially the later iteration reads the earlier one's value; any order that runs it first reads a stale value.
+COUNTEREXAMPLE (deterministic): size 12, seed 1: running loop 'i' in reversed order instead of ascending order changes dp[3] -- first diverging index 3: sequential=167, reversed=136
+FORCED PARALLEL (nondeterministic; the reversed-order result above is the proof): 200 of 200 runs at 20 threads (OpenMP provided 20) differed from sequential
+CERTIFICATE: REFUTED -- climbing_stairs is not safe to parallelize: RAW dependence on 'dp' witnessed by two concrete iterations, and reordering them changes the output
+
+Step 3 -- the refutation is also a checkable certificate: the checker evaluates the access
+functions at the two named iterations and confirms they touch the same element.
+$ parallix check-cert demo-out/climbing_stairs.cert.json --source examples/climbing_stairs.plx
+  ok    format parallix-certificate v1
+  ok    embedded source text matches its sha256
+  ok    on-disk source file matches the certificate hash
+  ok    verdict UNSAFE is consistent with status REFUTED
+  ok    every referenced array is subscripted in the source text
+  ok    witness 1 (dp, RAW): both iterations are in bounds, differ in the outer loop, and their subscripts evaluate to the recorded element
+  ok    witness 2 (dp, RAW): both iterations are in bounds, differ in the outer loop, and their subscripts evaluate to the recorded element
+  note  recorded test runs are reported, not re-executed; this check re-derives only the hash, the witness arithmetic and the independence claims
+CERTIFICATE VALID
+
+Done in 40s. Certificates, reports and the benchmark chart are in results/phase3/artifacts-fast
+Limits, stated plainly: a certificate is strong evidence plus a checkable witness, not a formal
+proof for all inputs; there is one backend (C + OpenMP); only affine loops are supported.

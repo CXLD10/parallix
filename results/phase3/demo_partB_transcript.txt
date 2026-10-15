@@ -1,0 +1,61 @@
+Parallix -- a compiler that checks its own parallelization verdicts
+
+Two kernels. One can be parallelized and one cannot. Parallix has to say which, say why,
+and then try to prove itself wrong.
+
+PART B: a problem that must NOT be parallelized
+===============================================
+
+Climbing stairs: dp[i] = dp[i-1] + dp[i-2]. Each step needs the two before it.
+$ cat examples/climbing_stairs.plx
+    // Demo B - climbing stairs / Fibonacci DP: dp[i] = dp[i-1] + dp[i-2].
+    // dp is read and written in place, so dp[0] and dp[1] are the base cases
+    // supplied by the caller (set both to 1 for the classic stair-climbing count).
+    // Integer arithmetic wraps on overflow.
+    // Expected verdict: UNSAFE (loop-carried RAW at distances 1 and 2).
+    kernel climbing_stairs(dp: i32[N]) -> dp: i32[N] {
+        auto i in 2..N {
+            dp[i] = dp[i-1] + dp[i-2]
+        }
+    }
+
+Step 1 -- analysis. The write dp[i] and the reads dp[i-1], dp[i-2] hit the same elements in
+DIFFERENT iterations: a loop-carried read-after-write at distances 1 and 2.
+$ parallix analyze examples/climbing_stairs.plx
+LOOP ANALYSIS: 1 loop -- i (auto) in [2, N)
+DEPENDENCE ANALYSIS: comparing 3 reference pair(s): dp[i](write) vs dp[i - 1](read): same array 'dp', GCD test admits a solution in every dimension (Step 2); unit-coefficient case: distance = b1 - b2 = 0 - -1 = 1 (Step 3); classified as RAW (Step 4); dp[i](write) vs dp[i - 2](read): same array 'dp', GCD test admits a solution in
+PARALLELIZATION: UNSAFE, at least one loop-carried array dependence was found that is not a licensed reduction
+SCHEDULE: sequential-only -- UNSAFE verdict: there is nothing safe to parallelize and nothing to corroborate, so no parallel variant is generated for this kernel
+
+No parallel code is generated. But a verdict is just a claim -- so Parallix tries to produce
+a concrete counterexample from the two conflicting iterations it found.
+
+Step 2 -- counterexample. First, deterministically: run the same loop in reversed order and
+show where the answer changes. Second, for illustration only, force the parallel version anyway and
+count how often it disagrees with sequential. That second result is nondeterministic and is not the
+proof; the reversed-order divergence is.
+$ parallix verify examples/climbing_stairs.plx --force-parallel --out demo-out --cert demo-out/climbing_stairs.cert.json
+VERDICT: UNSAFE -- at least one loop-carried array dependence was found that is not a licensed reduction
+SCHEDULE: sequential-only -- no parallel code is generated for this kernel
+CERTIFICATE FILE: results/phase3/artifacts/climbing_stairs.cert.json
+WITNESS: loop-carried RAW on 'dp': iteration (i=2) writes dp[2] via dp[i](write); iteration (i=3) reads the same element via dp[i - 1](read). Sequentially the later iteration reads the earlier one's value; any order that runs it first reads a stale value.
+COUNTEREXAMPLE (deterministic): size 12, seed 1: running loop 'i' in reversed order instead of ascending order changes dp[3] -- first diverging index 3: sequential=167, reversed=136
+FORCED PARALLEL (nondeterministic; the reversed-order result above is the proof): 200 of 200 runs at 20 threads (OpenMP provided 20) differed from sequential
+CERTIFICATE: REFUTED -- climbing_stairs is not safe to parallelize: RAW dependence on 'dp' witnessed by two concrete iterations, and reordering them changes the output
+
+Step 3 -- the refutation is also a checkable certificate: the checker evaluates the access
+functions at the two named iterations and confirms they touch the same element.
+$ parallix check-cert demo-out/climbing_stairs.cert.json --source examples/climbing_stairs.plx
+  ok    format parallix-certificate v1
+  ok    embedded source text matches its sha256
+  ok    on-disk source file matches the certificate hash
+  ok    verdict UNSAFE is consistent with status REFUTED
+  ok    every referenced array is subscripted in the source text
+  ok    witness 1 (dp, RAW): both iterations are in bounds, differ in the outer loop, and their subscripts evaluate to the recorded element
+  ok    witness 2 (dp, RAW): both iterations are in bounds, differ in the outer loop, and their subscripts evaluate to the recorded element
+  note  recorded test runs are reported, not re-executed; this check re-derives only the hash, the witness arithmetic and the independence claims
+CERTIFICATE VALID
+
+Done in 45s. Certificates, reports and the benchmark chart are in results/phase3/artifacts
+Limits, stated plainly: a certificate is strong evidence plus a checkable witness, not a formal
+proof for all inputs; there is one backend (C + OpenMP); only affine loops are supported.

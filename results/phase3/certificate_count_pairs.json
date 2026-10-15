@@ -1,0 +1,816 @@
+{
+  "format": "parallix-certificate",
+  "version": 1,
+  "tool": {
+    "name": "parallix",
+    "version": "1.0.0"
+  },
+  "source": {
+    "path": "examples/count_pairs.plx",
+    "sha256": "7449e8f39597563f5b825457bc029677be86e9219d10123d9ce35a6a67bcda75",
+    "text": "// Demo A - count pairs (i < j) with a[i] + a[j] == target, brute force.\n// Triangular inner loop, integer count reduction. Still O(n^2): parallelism\n// divides the constant factor, it does not change the complexity.\n// Expected verdict: SAFE_AS_REDUCTION.\nkernel count_pairs(a: i32[N], target: i32) -> count: i64 {\n    reduce(+) i in 0..N {\n        auto j in i+1..N {\n            count += select(a[i] + a[j] == target, 1, 0)\n        }\n    }\n}\n"
+  },
+  "toolchain": {
+    "compiler": "cc",
+    "version": "cc (Ubuntu 11.4.0-1ubuntu1~22.04.3) 11.4.0",
+    "openmp": true
+  },
+  "machine": {
+    "logical_cpus": 20,
+    "model": "13th Gen Intel(R) Core(TM) i7-13650HX",
+    "l1d_bytes": 49152,
+    "l2_bytes": 1310720,
+    "l3_bytes": 25165824
+  },
+  "kernel": "count_pairs",
+  "verdict": "SAFE_AS_REDUCTION",
+  "verdict_reason": "the only loop-carried dependence is on the scalar accumulator 'count', combined exclusively with its declared operator '+' inside reduce(+) { } (Step 5) — licensed as a parallel reduction, assuming operator associativity (note: floating-point + reduction may reorder rounding, so results may not be bit-exact across schedules)",
+  "status": "CORROBORATED",
+  "loop_nest": [
+    {
+      "var": "i",
+      "lower": "0",
+      "upper": "N",
+      "mode": "seq"
+    },
+    {
+      "var": "j",
+      "lower": "i + 1",
+      "upper": "N",
+      "mode": "auto"
+    }
+  ],
+  "references": [
+    {
+      "text": "a[i](read)",
+      "array": "a",
+      "kind": "read",
+      "subscripts": [
+        "i"
+      ],
+      "access": [
+        {
+          "var": "i",
+          "coef": 1,
+          "const": 0
+        }
+      ]
+    },
+    {
+      "text": "a[j](read)",
+      "array": "a",
+      "kind": "read",
+      "subscripts": [
+        "j"
+      ],
+      "access": [
+        {
+          "var": "j",
+          "coef": 1,
+          "const": 0
+        }
+      ]
+    }
+  ],
+  "pairs": [
+    {
+      "a": 0,
+      "b": 1,
+      "dependent": false,
+      "type": "no dependence",
+      "ruled_out_by": "both-reads",
+      "reasoning": "both references read 'a' -> independent (Step 1)"
+    }
+  ],
+  "schedule": {
+    "kind": "parallel-reduction",
+    "loop": "i",
+    "reason": "SAFE_AS_REDUCTION verdict: parallelize the reduction loop 'i' with an OpenMP reduction(+:count) clause"
+  },
+  "absence_summary": "1 reference pair(s) examined; none conflicts across iterations of the parallelized loop",
+  "validation": {
+    "sizes": [
+      37,
+      101,
+      257
+    ],
+    "seeds": [
+      1,
+      2,
+      3
+    ],
+    "threads": [
+      1,
+      2,
+      4,
+      8,
+      20
+    ],
+    "repetitions": 20,
+    "permutations": 3,
+    "machine_max_threads": 20,
+    "cells": [
+      {
+        "variant": "reverse",
+        "size": 37,
+        "seed": 1,
+        "threads": 0,
+        "runs": 1,
+        "mismatches": 0
+      },
+      {
+        "variant": "perm1",
+        "size": 37,
+        "seed": 1,
+        "threads": 0,
+        "runs": 1,
+        "mismatches": 0
+      },
+      {
+        "variant": "perm2",
+        "size": 37,
+        "seed": 1,
+        "threads": 0,
+        "runs": 1,
+        "mismatches": 0
+      },
+      {
+        "variant": "perm3",
+        "size": 37,
+        "seed": 1,
+        "threads": 0,
+        "runs": 1,
+        "mismatches": 0
+      },
+      {
+        "variant": "par",
+        "size": 37,
+        "seed": 1,
+        "threads": 1,
+        "team": 1,
+        "runs": 20,
+        "mismatches": 0
+      },
+      {
+        "variant": "par",
+        "size": 37,
+        "seed": 1,
+        "threads": 2,
+        "team": 2,
+        "runs": 20,
+        "mismatches": 0
+      },
+      {
+        "variant": "par",
+        "size": 37,
+        "seed": 1,
+        "threads": 4,
+        "team": 4,
+        "runs": 20,
+        "mismatches": 0
+      },
+      {
+        "variant": "par",
+        "size": 37,
+        "seed": 1,
+        "threads": 8,
+        "team": 8,
+        "runs": 20,
+        "mismatches": 0
+      },
+      {
+        "variant": "par",
+        "size": 37,
+        "seed": 1,
+        "threads": 20,
+        "team": 20,
+        "runs": 20,
+        "mismatches": 0
+      },
+      {
+        "variant": "reverse",
+        "size": 37,
+        "seed": 2,
+        "threads": 0,
+        "runs": 1,
+        "mismatches": 0
+      },
+      {
+        "variant": "perm1",
+        "size": 37,
+        "seed": 2,
+        "threads": 0,
+        "runs": 1,
+        "mismatches": 0
+      },
+      {
+        "variant": "perm2",
+        "size": 37,
+        "seed": 2,
+        "threads": 0,
+        "runs": 1,
+        "mismatches": 0
+      },
+      {
+        "variant": "perm3",
+        "size": 37,
+        "seed": 2,
+        "threads": 0,
+        "runs": 1,
+        "mismatches": 0
+      },
+      {
+        "variant": "par",
+        "size": 37,
+        "seed": 2,
+        "threads": 1,
+        "team": 1,
+        "runs": 20,
+        "mismatches": 0
+      },
+      {
+        "variant": "par",
+        "size": 37,
+        "seed": 2,
+        "threads": 2,
+        "team": 2,
+        "runs": 20,
+        "mismatches": 0
+      },
+      {
+        "variant": "par",
+        "size": 37,
+        "seed": 2,
+        "threads": 4,
+        "team": 4,
+        "runs": 20,
+        "mismatches": 0
+      },
+      {
+        "variant": "par",
+        "size": 37,
+        "seed": 2,
+        "threads": 8,
+        "team": 8,
+        "runs": 20,
+        "mismatches": 0
+      },
+      {
+        "variant": "par",
+        "size": 37,
+        "seed": 2,
+        "threads": 20,
+        "team": 20,
+        "runs": 20,
+        "mismatches": 0
+      },
+      {
+        "variant": "reverse",
+        "size": 37,
+        "seed": 3,
+        "threads": 0,
+        "runs": 1,
+        "mismatches": 0
+      },
+      {
+        "variant": "perm1",
+        "size": 37,
+        "seed": 3,
+        "threads": 0,
+        "runs": 1,
+        "mismatches": 0
+      },
+      {
+        "variant": "perm2",
+        "size": 37,
+        "seed": 3,
+        "threads": 0,
+        "runs": 1,
+        "mismatches": 0
+      },
+      {
+        "variant": "perm3",
+        "size": 37,
+        "seed": 3,
+        "threads": 0,
+        "runs": 1,
+        "mismatches": 0
+      },
+      {
+        "variant": "par",
+        "size": 37,
+        "seed": 3,
+        "threads": 1,
+        "team": 1,
+        "runs": 20,
+        "mismatches": 0
+      },
+      {
+        "variant": "par",
+        "size": 37,
+        "seed": 3,
+        "threads": 2,
+        "team": 2,
+        "runs": 20,
+        "mismatches": 0
+      },
+      {
+        "variant": "par",
+        "size": 37,
+        "seed": 3,
+        "threads": 4,
+        "team": 4,
+        "runs": 20,
+        "mismatches": 0
+      },
+      {
+        "variant": "par",
+        "size": 37,
+        "seed": 3,
+        "threads": 8,
+        "team": 8,
+        "runs": 20,
+        "mismatches": 0
+      },
+      {
+        "variant": "par",
+        "size": 37,
+        "seed": 3,
+        "threads": 20,
+        "team": 20,
+        "runs": 20,
+        "mismatches": 0
+      },
+      {
+        "variant": "reverse",
+        "size": 101,
+        "seed": 1,
+        "threads": 0,
+        "runs": 1,
+        "mismatches": 0
+      },
+      {
+        "variant": "perm1",
+        "size": 101,
+        "seed": 1,
+        "threads": 0,
+        "runs": 1,
+        "mismatches": 0
+      },
+      {
+        "variant": "perm2",
+        "size": 101,
+        "seed": 1,
+        "threads": 0,
+        "runs": 1,
+        "mismatches": 0
+      },
+      {
+        "variant": "perm3",
+        "size": 101,
+        "seed": 1,
+        "threads": 0,
+        "runs": 1,
+        "mismatches": 0
+      },
+      {
+        "variant": "par",
+        "size": 101,
+        "seed": 1,
+        "threads": 1,
+        "team": 1,
+        "runs": 20,
+        "mismatches": 0
+      },
+      {
+        "variant": "par",
+        "size": 101,
+        "seed": 1,
+        "threads": 2,
+        "team": 2,
+        "runs": 20,
+        "mismatches": 0
+      },
+      {
+        "variant": "par",
+        "size": 101,
+        "seed": 1,
+        "threads": 4,
+        "team": 4,
+        "runs": 20,
+        "mismatches": 0
+      },
+      {
+        "variant": "par",
+        "size": 101,
+        "seed": 1,
+        "threads": 8,
+        "team": 8,
+        "runs": 20,
+        "mismatches": 0
+      },
+      {
+        "variant": "par",
+        "size": 101,
+        "seed": 1,
+        "threads": 20,
+        "team": 20,
+        "runs": 20,
+        "mismatches": 0
+      },
+      {
+        "variant": "reverse",
+        "size": 101,
+        "seed": 2,
+        "threads": 0,
+        "runs": 1,
+        "mismatches": 0
+      },
+      {
+        "variant": "perm1",
+        "size": 101,
+        "seed": 2,
+        "threads": 0,
+        "runs": 1,
+        "mismatches": 0
+      },
+      {
+        "variant": "perm2",
+        "size": 101,
+        "seed": 2,
+        "threads": 0,
+        "runs": 1,
+        "mismatches": 0
+      },
+      {
+        "variant": "perm3",
+        "size": 101,
+        "seed": 2,
+        "threads": 0,
+        "runs": 1,
+        "mismatches": 0
+      },
+      {
+        "variant": "par",
+        "size": 101,
+        "seed": 2,
+        "threads": 1,
+        "team": 1,
+        "runs": 20,
+        "mismatches": 0
+      },
+      {
+        "variant": "par",
+        "size": 101,
+        "seed": 2,
+        "threads": 2,
+        "team": 2,
+        "runs": 20,
+        "mismatches": 0
+      },
+      {
+        "variant": "par",
+        "size": 101,
+        "seed": 2,
+        "threads": 4,
+        "team": 4,
+        "runs": 20,
+        "mismatches": 0
+      },
+      {
+        "variant": "par",
+        "size": 101,
+        "seed": 2,
+        "threads": 8,
+        "team": 8,
+        "runs": 20,
+        "mismatches": 0
+      },
+      {
+        "variant": "par",
+        "size": 101,
+        "seed": 2,
+        "threads": 20,
+        "team": 20,
+        "runs": 20,
+        "mismatches": 0
+      },
+      {
+        "variant": "reverse",
+        "size": 101,
+        "seed": 3,
+        "threads": 0,
+        "runs": 1,
+        "mismatches": 0
+      },
+      {
+        "variant": "perm1",
+        "size": 101,
+        "seed": 3,
+        "threads": 0,
+        "runs": 1,
+        "mismatches": 0
+      },
+      {
+        "variant": "perm2",
+        "size": 101,
+        "seed": 3,
+        "threads": 0,
+        "runs": 1,
+        "mismatches": 0
+      },
+      {
+        "variant": "perm3",
+        "size": 101,
+        "seed": 3,
+        "threads": 0,
+        "runs": 1,
+        "mismatches": 0
+      },
+      {
+        "variant": "par",
+        "size": 101,
+        "seed": 3,
+        "threads": 1,
+        "team": 1,
+        "runs": 20,
+        "mismatches": 0
+      },
+      {
+        "variant": "par",
+        "size": 101,
+        "seed": 3,
+        "threads": 2,
+        "team": 2,
+        "runs": 20,
+        "mismatches": 0
+      },
+      {
+        "variant": "par",
+        "size": 101,
+        "seed": 3,
+        "threads": 4,
+        "team": 4,
+        "runs": 20,
+        "mismatches": 0
+      },
+      {
+        "variant": "par",
+        "size": 101,
+        "seed": 3,
+        "threads": 8,
+        "team": 8,
+        "runs": 20,
+        "mismatches": 0
+      },
+      {
+        "variant": "par",
+        "size": 101,
+        "seed": 3,
+        "threads": 20,
+        "team": 20,
+        "runs": 20,
+        "mismatches": 0
+      },
+      {
+        "variant": "reverse",
+        "size": 257,
+        "seed": 1,
+        "threads": 0,
+        "runs": 1,
+        "mismatches": 0
+      },
+      {
+        "variant": "perm1",
+        "size": 257,
+        "seed": 1,
+        "threads": 0,
+        "runs": 1,
+        "mismatches": 0
+      },
+      {
+        "variant": "perm2",
+        "size": 257,
+        "seed": 1,
+        "threads": 0,
+        "runs": 1,
+        "mismatches": 0
+      },
+      {
+        "variant": "perm3",
+        "size": 257,
+        "seed": 1,
+        "threads": 0,
+        "runs": 1,
+        "mismatches": 0
+      },
+      {
+        "variant": "par",
+        "size": 257,
+        "seed": 1,
+        "threads": 1,
+        "team": 1,
+        "runs": 20,
+        "mismatches": 0
+      },
+      {
+        "variant": "par",
+        "size": 257,
+        "seed": 1,
+        "threads": 2,
+        "team": 2,
+        "runs": 20,
+        "mismatches": 0
+      },
+      {
+        "variant": "par",
+        "size": 257,
+        "seed": 1,
+        "threads": 4,
+        "team": 4,
+        "runs": 20,
+        "mismatches": 0
+      },
+      {
+        "variant": "par",
+        "size": 257,
+        "seed": 1,
+        "threads": 8,
+        "team": 8,
+        "runs": 20,
+        "mismatches": 0
+      },
+      {
+        "variant": "par",
+        "size": 257,
+        "seed": 1,
+        "threads": 20,
+        "team": 20,
+        "runs": 20,
+        "mismatches": 0
+      },
+      {
+        "variant": "reverse",
+        "size": 257,
+        "seed": 2,
+        "threads": 0,
+        "runs": 1,
+        "mismatches": 0
+      },
+      {
+        "variant": "perm1",
+        "size": 257,
+        "seed": 2,
+        "threads": 0,
+        "runs": 1,
+        "mismatches": 0
+      },
+      {
+        "variant": "perm2",
+        "size": 257,
+        "seed": 2,
+        "threads": 0,
+        "runs": 1,
+        "mismatches": 0
+      },
+      {
+        "variant": "perm3",
+        "size": 257,
+        "seed": 2,
+        "threads": 0,
+        "runs": 1,
+        "mismatches": 0
+      },
+      {
+        "variant": "par",
+        "size": 257,
+        "seed": 2,
+        "threads": 1,
+        "team": 1,
+        "runs": 20,
+        "mismatches": 0
+      },
+      {
+        "variant": "par",
+        "size": 257,
+        "seed": 2,
+        "threads": 2,
+        "team": 2,
+        "runs": 20,
+        "mismatches": 0
+      },
+      {
+        "variant": "par",
+        "size": 257,
+        "seed": 2,
+        "threads": 4,
+        "team": 4,
+        "runs": 20,
+        "mismatches": 0
+      },
+      {
+        "variant": "par",
+        "size": 257,
+        "seed": 2,
+        "threads": 8,
+        "team": 8,
+        "runs": 20,
+        "mismatches": 0
+      },
+      {
+        "variant": "par",
+        "size": 257,
+        "seed": 2,
+        "threads": 20,
+        "team": 20,
+        "runs": 20,
+        "mismatches": 0
+      },
+      {
+        "variant": "reverse",
+        "size": 257,
+        "seed": 3,
+        "threads": 0,
+        "runs": 1,
+        "mismatches": 0
+      },
+      {
+        "variant": "perm1",
+        "size": 257,
+        "seed": 3,
+        "threads": 0,
+        "runs": 1,
+        "mismatches": 0
+      },
+      {
+        "variant": "perm2",
+        "size": 257,
+        "seed": 3,
+        "threads": 0,
+        "runs": 1,
+        "mismatches": 0
+      },
+      {
+        "variant": "perm3",
+        "size": 257,
+        "seed": 3,
+        "threads": 0,
+        "runs": 1,
+        "mismatches": 0
+      },
+      {
+        "variant": "par",
+        "size": 257,
+        "seed": 3,
+        "threads": 1,
+        "team": 1,
+        "runs": 20,
+        "mismatches": 0
+      },
+      {
+        "variant": "par",
+        "size": 257,
+        "seed": 3,
+        "threads": 2,
+        "team": 2,
+        "runs": 20,
+        "mismatches": 0
+      },
+      {
+        "variant": "par",
+        "size": 257,
+        "seed": 3,
+        "threads": 4,
+        "team": 4,
+        "runs": 20,
+        "mismatches": 0
+      },
+      {
+        "variant": "par",
+        "size": 257,
+        "seed": 3,
+        "threads": 8,
+        "team": 8,
+        "runs": 20,
+        "mismatches": 0
+      },
+      {
+        "variant": "par",
+        "size": 257,
+        "seed": 3,
+        "threads": 20,
+        "team": 20,
+        "runs": 20,
+        "mismatches": 0
+      }
+    ],
+    "order_runs": 36,
+    "order_mismatches": 0,
+    "parallel_runs": 900,
+    "parallel_mismatches": 0,
+    "thread_sanitizer": {
+      "status": "skipped",
+      "detail": "ThreadSanitizer cannot judge OpenMP programs on this toolchain: its race-free control program already fails (exit 66: FATAL: ThreadSanitizer: unexpected memory mapping 0x570c2ab95000-0x570c2ab96000)"
+    }
+  }
+}

@@ -1,0 +1,12 @@
+TOKENS: KERNEL IDENT(prefix_like) LPAREN IDENT(A) COLON F32 LBRACKET IDENT(N) RBRACKET COMMA IDENT(B) COLON F32 LBRACKET IDENT(N) RBRACKET RPAREN ARROW IDENT(A) COLON F32 LBRACKET IDENT(N) RBRACKET LBRACE AUTO IDENT(i) IN INT(1) DOTDOT IDENT(N) LBRACE IDENT(A) LBRACKET IDENT(i) RBRACKET ASSIGN IDENT(A) LBRACKET IDENT(i) MINUS INT(1) RBRACKET PLUS IDENT(B) LBRACKET IDENT(i) RBRACKET RBRACE RBRACE
+AST: kernel prefix_like(A: f32[N], B: f32[N]) -> A: f32[N] { auto i in 1..N { A[i] = A[i - 1] + B[i] } }
+SEMANTIC INFO: kernel 'prefix_like' passed affine-boundedness, shape, reduction-validation, symbol-resolution and assignment-target checks.
+LOOP ANALYSIS: 1 loop -- i (auto) in [1, N)
+DEPENDENCE ANALYSIS: comparing 3 reference pair(s): A[i](write) vs A[i - 1](read): same array 'A', GCD test admits a solution in every dimension (Step 2); unit-coefficient case: distance = b1 - b2 = 0 - -1 = 1 (Step 3); classified as RAW (Step 4); A[i](write) vs B[i](read): different arrays ('A' vs 'B') -> independent (Step 1); A[i - 1](read) vs B[i](read): different arrays ('A' vs 'B') -> independent (Step 1)
+PARALLELIZATION: UNSAFE, at least one loop-carried array dependence was found that is not a licensed reduction
+SCHEDULE: sequential-only -- UNSAFE verdict: there is nothing safe to parallelize and nothing to corroborate, so no parallel variant is generated for this kernel
+SCHEDULE: sequential-only -- no parallel code is generated for this kernel
+CERTIFICATE FILE: results/phase3/artifacts-fixtures/prefix_like.cert.json
+WITNESS: loop-carried RAW on 'A': iteration (i=1) writes A[1] via A[i](write); iteration (i=2) reads the same element via A[i - 1](read). Sequentially the later iteration reads the earlier one's value; any order that runs it first reads a stale value.
+COUNTEREXAMPLE (deterministic): size 12, seed 1: running loop 'i' in reversed order instead of ascending order changes A[2] -- first diverging index 2: sequential=189.3, reversed=82
+CERTIFICATE: REFUTED -- prefix_like is not safe to parallelize: RAW dependence on 'A' witnessed by two concrete iterations, and reordering them changes the output

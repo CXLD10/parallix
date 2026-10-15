@@ -1,0 +1,3 @@
+normal pace: partA=147s partB=45s total=192s
+--fast: total=40s
+capture-done

@@ -1,0 +1,180 @@
+{
+  "format": "parallix-certificate",
+  "version": 1,
+  "tool": {
+    "name": "parallix",
+    "version": "1.0.0"
+  },
+  "source": {
+    "path": "examples/climbing_stairs.plx",
+    "sha256": "e0771cde220533af2bf0f42cab097b46bec4c806934d519c56c18a5a5da4fd75",
+    "text": "// Demo B - climbing stairs / Fibonacci DP: dp[i] = dp[i-1] + dp[i-2].\n// dp is read and written in place, so dp[0] and dp[1] are the base cases\n// supplied by the caller (set both to 1 for the classic stair-climbing count).\n// Integer arithmetic wraps on overflow.\n// Expected verdict: UNSAFE (loop-carried RAW at distances 1 and 2).\nkernel climbing_stairs(dp: i32[N]) -> dp: i32[N] {\n    auto i in 2..N {\n        dp[i] = dp[i-1] + dp[i-2]\n    }\n}\n"
+  },
+  "toolchain": {
+    "note": "counterexample harness compiled with the system C compiler"
+  },
+  "machine": {
+    "logical_cpus": 20,
+    "model": "13th Gen Intel(R) Core(TM) i7-13650HX",
+    "l1d_bytes": 49152,
+    "l2_bytes": 1310720,
+    "l3_bytes": 25165824
+  },
+  "kernel": "climbing_stairs",
+  "verdict": "UNSAFE",
+  "verdict_reason": "at least one loop-carried array dependence was found that is not a licensed reduction",
+  "status": "REFUTED",
+  "loop_nest": [
+    {
+      "var": "i",
+      "lower": "2",
+      "upper": "N",
+      "mode": "auto"
+    }
+  ],
+  "references": [
+    {
+      "text": "dp[i](write)",
+      "array": "dp",
+      "kind": "write",
+      "subscripts": [
+        "i"
+      ],
+      "access": [
+        {
+          "var": "i",
+          "coef": 1,
+          "const": 0
+        }
+      ]
+    },
+    {
+      "text": "dp[i - 1](read)",
+      "array": "dp",
+      "kind": "read",
+      "subscripts": [
+        "i - 1"
+      ],
+      "access": [
+        {
+          "var": "i",
+          "coef": 1,
+          "const": -1
+        }
+      ]
+    },
+    {
+      "text": "dp[i - 2](read)",
+      "array": "dp",
+      "kind": "read",
+      "subscripts": [
+        "i - 2"
+      ],
+      "access": [
+        {
+          "var": "i",
+          "coef": 1,
+          "const": -2
+        }
+      ]
+    }
+  ],
+  "pairs": [
+    {
+      "a": 0,
+      "b": 1,
+      "dependent": true,
+      "type": "RAW",
+      "distance": 1,
+      "ruled_out_by": "",
+      "reasoning": "same array 'dp', GCD test admits a solution in every dimension (Step 2); unit-coefficient case: distance = b1 - b2 = 0 - -1 = 1 (Step 3); classified as RAW (Step 4)"
+    },
+    {
+      "a": 0,
+      "b": 2,
+      "dependent": true,
+      "type": "RAW",
+      "distance": 2,
+      "ruled_out_by": "",
+      "reasoning": "same array 'dp', GCD test admits a solution in every dimension (Step 2); unit-coefficient case: distance = b1 - b2 = 0 - -2 = 2 (Step 3); classified as RAW (Step 4)"
+    },
+    {
+      "a": 1,
+      "b": 2,
+      "dependent": false,
+      "type": "no dependence",
+      "ruled_out_by": "both-reads",
+      "reasoning": "both references read 'dp' -> independent (Step 1)"
+    }
+  ],
+  "schedule": {
+    "kind": "sequential-only",
+    "loop": "",
+    "reason": "UNSAFE verdict: there is nothing safe to parallelize and nothing to corroborate, so no parallel variant is generated for this kernel"
+  },
+  "witnesses": [
+    {
+      "pair": 0,
+      "type": "RAW",
+      "array": "dp",
+      "dims": {
+        "N": 12
+      },
+      "element": [
+        2
+      ],
+      "first": {
+        "ref": 0,
+        "iteration": {
+          "i": 2
+        }
+      },
+      "second": {
+        "ref": 1,
+        "iteration": {
+          "i": 3
+        }
+      },
+      "explanation": "loop-carried RAW on 'dp': iteration (i=2) writes dp[2] via dp[i](write); iteration (i=3) reads the same element via dp[i - 1](read). Sequentially the later iteration reads the earlier one's value; any order that runs it first reads a stale value."
+    },
+    {
+      "pair": 1,
+      "type": "RAW",
+      "array": "dp",
+      "dims": {
+        "N": 12
+      },
+      "element": [
+        2
+      ],
+      "first": {
+        "ref": 0,
+        "iteration": {
+          "i": 2
+        }
+      },
+      "second": {
+        "ref": 2,
+        "iteration": {
+          "i": 4
+        }
+      },
+      "explanation": "loop-carried RAW on 'dp': iteration (i=2) writes dp[2] via dp[i](write); iteration (i=4) reads the same element via dp[i - 2](read). Sequentially the later iteration reads the earlier one's value; any order that runs it first reads a stale value."
+    }
+  ],
+  "refutation": {
+    "size": 12,
+    "diverged": true,
+    "seed": 1,
+    "first_diverging_index": 3,
+    "location": "dp[3]",
+    "sequential_value": 167,
+    "reversed_value": 136,
+    "forced_parallel": {
+      "nondeterministic": true,
+      "threads": 20,
+      "runs": 200,
+      "differing": 200
+    }
+  }
+}

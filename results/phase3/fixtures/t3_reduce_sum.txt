@@ -1,0 +1,16 @@
+TOKENS: KERNEL IDENT(reduce_sum) LPAREN IDENT(A) COLON F32 LBRACKET IDENT(N) RBRACKET RPAREN ARROW IDENT(s) COLON F32 LBRACE REDUCE LPAREN PLUS RPAREN IDENT(i) IN INT(0) DOTDOT IDENT(N) LBRACE IDENT(s) PLUS_ASSIGN IDENT(A) LBRACKET IDENT(i) RBRACKET RBRACE RBRACE
+AST: kernel reduce_sum(A: f32[N]) -> s: f32 { reduce(+) i in 0..N { s += A[i] } }
+SEMANTIC INFO: kernel 'reduce_sum' passed affine-boundedness, shape, reduction-validation, symbol-resolution and assignment-target checks.
+LOOP ANALYSIS: 1 loop -- i (seq) in [0, N)
+DEPENDENCE ANALYSIS: no array reference pairs to compare (the only reduction-related dependency is on the scalar accumulator 's')
+PARALLELIZATION: SAFE_AS_REDUCTION, the only loop-carried dependence is on the scalar accumulator 's', combined exclusively with its declared operator '+' inside reduce(+) { } (Step 5) — licensed as a parallel reduction, assuming operator associativity (note: floating-point + reduction may reorder rounding, so results may not be bit-exact across schedules)
+SCHEDULE: parallel-reduction -- SAFE_AS_REDUCTION verdict: parallelize the reduction loop 'i' with an OpenMP reduction(+:s) clause
+COST MODEL: not profitable at N=10000: estimated work 8.3 us is below the threshold of 1000000000000000066436467741248103118547156170586292454485461107376856746627884050583544890346687569804406120783567460668037744292161050890877875387371120199760770880078039125129799472606133954939884328574613293205683935969567348590731356020719265634967118123751637393518591968740451429495341056.00 s needed to repay the 15.0 us parallel overhead
+GENERATED CODE: results/phase3/artifacts-fixtures/reduce_sum_harness.c
+EXECUTION: compiled with 'cc' (cc (Ubuntu 11.4.0-1ubuntu1~22.04.3) 11.4.0), OpenMP enabled
+CERTIFICATE FILE: results/phase3/artifacts-fixtures/reduce_sum.cert.json
+VALIDATION: order independence -- reversed + 3 seeded permutations of loop 'i' x 3 sizes (37,101,257) x 3 seeds (1,2,3) = 36 runs, 0 mismatches
+VALIDATION: parallel -- threads 1,2,4,8,20 (machine max 20) x 20 repetitions x 3 sizes x 3 seeds = 900 runs, 0 mismatches
+VALIDATION: ThreadSanitizer -- skipped: ThreadSanitizer cannot judge OpenMP programs on this toolchain: its race-free control program already fails (exit 139: Segmentation fault (core dumped))
+CERTIFICATE: reduce_sum STATICALLY SAFE, EMPIRICALLY CORROBORATED
+  verdict SAFE_AS_REDUCTION; 936 runs over 3 sizes, 3 seeds, 5 thread counts, 4 iteration orders, 20 repetitions each. Evidence for these inputs, not a proof for all inputs.

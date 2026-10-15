@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Parallix explanation: count_pairs</title>
+<style>
+:root{--bg:#fcfcfb;--ink:#1a1a19;--muted:#55554f;--line:#e4e4e0;--card:#fff;--ok:#00704f;--no:#b3261e;--accent:#0072B2}
+@media (prefers-color-scheme: dark){:root{--bg:#161615;--ink:#ecece8;--muted:#a3a39b;--line:#2d2d2a;--card:#1f1f1d;--ok:#4cc79a;--no:#ff8a80;--accent:#56b4e9}}
+body{background:var(--bg);color:var(--ink);font:15px/1.5 system-ui,sans-serif;margin:0;padding:24px 16px}
+main{max-width:820px;margin:0 auto}h1{font-size:22px;margin:0 0 4px}h2{font-size:16px;margin:0}
+.sub{color:var(--muted);margin:0 0 20px}.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:14px 16px;margin:0 0 14px}
+.tag{display:inline-block;font:12px ui-monospace,monospace;padding:1px 8px;border-radius:99px;border:1px solid var(--line);color:var(--muted);margin-left:8px}
+.ok{color:var(--ok)}.no{color:var(--no)}dl{margin:8px 0 0}dt{font-weight:600;margin-top:8px}dd{margin:2px 0 0;color:var(--muted)}
+pre{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px;overflow:auto;font-size:13px}code{font-family:ui-monospace,monospace}
+</style></head><body><main>
+<h1>Kernel <code>count_pairs</code></h1>
+<p class="sub">Verdict <strong class="ok">SAFE_AS_REDUCTION</strong> &mdash; the only loop-carried dependence is on the scalar accumulator 'count', combined exclusively with its declared operator '+' inside reduce(+) { } (Step 5) — licensed as a parallel reduction, assuming operator associativity (note: floating-point + reduction may reorder rounding, so results may not be bit-exact across schedules)</p>
+<p class="sub">Schedule: parallel-reduction -- SAFE_AS_REDUCTION verdict: parallelize the reduction loop 'i' with an OpenMP reduction(+:count) clause</p>
+<p class="sub">Note: loop 'i' is marked `seq` in the source; the analysis proved it safe and parallelizes it</p>
+<section class="card"><h2>Loop <code>i</code><span class="tag">seq i in [0, N)</span></h2>
+<p><strong>parallelized (OpenMP, recommended 20 threads)</strong></p>
+<dl><dt>Rule R-REDUCTION</dt><dd>SAFE_AS_REDUCTION: the only carried dependence is an associative accumulation; parallelize the reduction loop with a reduction clause.</dd>
+<dt>Evidence</dt><dd>a[i](read) vs a[j](read): both references read 'a' -&gt; independent (Step 1)</dd><dd>verdict: SAFE_AS_REDUCTION -- the only loop-carried dependence is on the scalar accumulator 'count', combined exclusively with its declared operator '+' inside reduce(+) { } (Step 5) — licensed as a parallel reduction, assuming operator associativity (note: floating-point + reduction may reorder rounding, so results may not be bit-exact across schedules)</dd><dd>cost model at the chosen size: 12803040000 body executions x 5.5 cycles each</dd><dd>profitable at N=160000: estimated 23.47 s sequential vs 1.38 s on 20 threads (fork/join overhead 42.0 us; break-even work 56.7 us)</dd><dd>schedule(dynamic, 4): an inner bound depends on 'i', so iterations carry unequal work and static chunks would unbalance the threads</dd><dt>Alternatives rejected</dt><dd><strong>atomic / critical update of 'count'</strong> &mdash; serializes every update; a reduction clause keeps a private partial per thread and combines once</dd><dd><strong>parallelize inner loop 'j' instead</strong> &mdash; would open a parallel region once per outer iteration, paying fork/join each time</dd><dd><strong>collapse / tile the nest</strong> &mdash; not implemented in this version</dd><dd><strong>static schedule</strong> &mdash; iterations are unequal; the thread holding the first chunk would do about twice the average work</dd></dl></section>
+<section class="card"><h2>Loop <code>j</code><span class="tag">auto j in [i + 1, N)</span></h2>
+<p><strong>kept sequential (inside each thread's iterations)</strong></p>
+<dl><dt>Rule R-INNER-SEQ</dt><dd>Only the outermost loop is parallelized; inner loops run sequentially within each iteration of it.</dd>
+<dt>Evidence</dt><dd>outer loop 'i' already supplies the parallelism</dd><dt>Alternatives rejected</dt><dd><strong>parallelize 'j' as well</strong> &mdash; nested parallel regions add overhead without extra useful parallelism</dd></dl></section>
+<h2>Source</h2>
+<pre><code>// Demo A - count pairs (i &lt; j) with a[i] + a[j] == target, brute force.
+// Triangular inner loop, integer count reduction. Still O(n^2): parallelism
+// divides the constant factor, it does not change the complexity.
+// Expected verdict: SAFE_AS_REDUCTION.
+kernel count_pairs(a: i32[N], target: i32) -&gt; count: i64 {
+    reduce(+) i in 0..N {
+        auto j in i+1..N {
+            count += select(a[i] + a[j] == target, 1, 0)
+        }
+    }
+}
+</code></pre>
+</main></body></html>
