@@ -8,13 +8,14 @@ namespace parallix {
 
 // ---- Types -----------------------------------------------------------
 
-enum class TypeBase { F32, F64, I32 };
+enum class TypeBase { F32, F64, I32, I64 };
 
 inline const char* ToString(TypeBase base) {
   switch (base) {
     case TypeBase::F32: return "f32";
     case TypeBase::F64: return "f64";
     case TypeBase::I32: return "i32";
+    case TypeBase::I64: return "i64";
   }
   return "unknown";
 }
@@ -42,7 +43,7 @@ struct Param {
 
 // ---- Expressions -------------------------------------------------------
 
-enum class ExprKind { VAR_REF, INT_LITERAL, BINARY };
+enum class ExprKind { VAR_REF, INT_LITERAL, BINARY, CALL };
 
 struct Expr {
   ExprKind kind;
@@ -70,7 +71,11 @@ struct IntLiteralExpr : Expr {
   IntLiteralExpr() : Expr(ExprKind::INT_LITERAL) {}
 };
 
-enum class BinaryOp { ADD, SUB, MUL, DIV };
+// EQ..GE are value-producing comparisons (1 or 0); they are never control flow
+// and are rejected inside subscripts and loop bounds by semantic analysis.
+enum class BinaryOp { ADD, SUB, MUL, DIV, EQ, NE, LT, LE, GT, GE };
+
+inline bool IsComparison(BinaryOp op) { return op >= BinaryOp::EQ; }
 
 inline const char* ToString(BinaryOp op) {
   switch (op) {
@@ -78,6 +83,12 @@ inline const char* ToString(BinaryOp op) {
     case BinaryOp::SUB: return "-";
     case BinaryOp::MUL: return "*";
     case BinaryOp::DIV: return "/";
+    case BinaryOp::EQ: return "==";
+    case BinaryOp::NE: return "!=";
+    case BinaryOp::LT: return "<";
+    case BinaryOp::LE: return "<=";
+    case BinaryOp::GT: return ">";
+    case BinaryOp::GE: return ">=";
   }
   return "?";
 }
@@ -87,6 +98,24 @@ struct BinaryExpr : Expr {
   ExprPtr lhs;
   ExprPtr rhs;
   BinaryExpr() : Expr(ExprKind::BINARY) {}
+};
+
+// Built-in value functions: select(cond, a, b), min(a, b), max(a, b).
+enum class CallKind { SELECT, MIN, MAX };
+
+inline const char* ToString(CallKind kind) {
+  switch (kind) {
+    case CallKind::SELECT: return "select";
+    case CallKind::MIN: return "min";
+    case CallKind::MAX: return "max";
+  }
+  return "?";
+}
+
+struct CallExpr : Expr {
+  CallKind callee = CallKind::SELECT;
+  std::vector<ExprPtr> args;  // select: 3 (cond, a, b); min/max: 2
+  CallExpr() : Expr(ExprKind::CALL) {}
 };
 
 // ---- Statements ----------------------------------------------------

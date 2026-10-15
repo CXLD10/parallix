@@ -11,7 +11,7 @@ namespace parallix {
 
 // A linear combination of named symbols (enclosing loop indices, or
 // compile-time-known dimension parameters like `N`) plus a constant:
-// sum(coefficient * name) + constant. Used for loop bounds (specs/03).
+// sum(coefficient * name) + constant. Used for loop bounds.
 struct AffineExpr {
   std::vector<std::pair<std::string, long long>> terms;  // name -> nonzero coefficient
   long long constant = 0;
@@ -44,7 +44,7 @@ struct SourceLoc {
 };
 
 // A single array dimension's access function: coefficient*index_var +
-// constant (specs/03, specs/04). index_var is empty (coefficient always 0)
+// constant. index_var is empty (coefficient always 0)
 // when that dimension's subscript does not depend on any loop index.
 struct AccessFunction {
   std::string index_var;
@@ -71,7 +71,7 @@ struct LoopLevel {
   LoopMode mode;
 };
 
-// The whole PIR for one kernel: specs/03's loop nest + references +
+// The whole PIR for one kernel: the loop nest + references +
 // (implicitly) the iteration domain, which is just [lower, upper) per level.
 struct PIRKernel {
   std::string name;

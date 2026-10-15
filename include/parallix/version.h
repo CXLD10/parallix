@@ -2,7 +2,7 @@
 
 namespace parallix {
 
-// Bumped by hand at each milestone if useful; not load-bearing for anything.
+// The release version string.
 const char* version();
 
 }  // namespace parallix

@@ -18,6 +18,8 @@ enum class TokenKind {
   F32,
   F64,
   I32,
+  I64,
+  SELECT,
 
   // Reduction-operator keywords (also usable where 'min'/'max' are named)
   MIN,
@@ -30,6 +32,12 @@ enum class TokenKind {
 
   // Operators
   ASSIGN,       // =
+  EQ,           // ==
+  NE,           // !=
+  LT,           // <
+  LE,           // <=
+  GT,           // >
+  GE,           // >=
   PLUS_ASSIGN,  // +=
   PLUS,         // +
   MINUS,        // -

@@ -29,6 +29,15 @@ std::string ExprToString(const Expr& expr) {
       const auto& bin = static_cast<const BinaryExpr&>(expr);
       return ExprToString(*bin.lhs) + " " + ToString(bin.op) + " " + ExprToString(*bin.rhs);
     }
+    case ExprKind::CALL: {
+      const auto& call = static_cast<const CallExpr&>(expr);
+      std::string out = std::string(ToString(call.callee)) + "(";
+      for (size_t i = 0; i < call.args.size(); ++i) {
+        if (i > 0) out += ", ";
+        out += ExprToString(*call.args[i]);
+      }
+      return out + ")";
+    }
   }
   return "<?>";
 }
@@ -53,7 +62,7 @@ void MergeTerms(std::vector<std::pair<std::string, long long>>& a,
 }
 
 // Extracts the affine form of an expression that Sema has already validated
-// as affine (specs/02 rule 1): sum(coefficient * index/dim) + constant.
+// as affine: sum(coefficient * index/dim) + constant.
 AffineExpr ExtractAffine(const Expr& expr) {
   switch (expr.kind) {
     case ExprKind::INT_LITERAL:
@@ -69,6 +78,9 @@ AffineExpr ExtractAffine(const Expr& expr) {
       AffineExpr lhs = ExtractAffine(*bin.lhs);
       AffineExpr rhs = ExtractAffine(*bin.rhs);
       switch (bin.op) {
+        case BinaryOp::EQ: case BinaryOp::NE: case BinaryOp::LT:
+        case BinaryOp::LE: case BinaryOp::GT: case BinaryOp::GE:
+          return AffineExpr{};  // unreachable: sema rejects comparisons in affine contexts
         case BinaryOp::ADD: {
           AffineExpr result = lhs;
           MergeTerms(result.terms, rhs.terms, 1);
@@ -105,6 +117,8 @@ AffineExpr ExtractAffine(const Expr& expr) {
       }
       return AffineExpr{};
     }
+    case ExprKind::CALL:
+      return AffineExpr{};  // unreachable: sema rejects calls in affine contexts
   }
   return AffineExpr{};
 }
@@ -118,9 +132,9 @@ AccessFunction ToAccessFunction(const Expr& subscript) {
   }
   if (affine.terms.size() > 1) {
     throw LoweringError(
-        "Phase 1 PIR only supports a single loop index per array-dimension subscript; "
+        "The PIR only supports a single loop index per array-dimension subscript; "
         "found multiple indices in `" +
-        ExprToString(subscript) + "` (out of scope for this phase, see specs/03)");
+        ExprToString(subscript) + "` (not supported)");
   }
   access.index_var = affine.terms[0].first;
   access.coefficient = affine.terms[0].second;
@@ -153,6 +167,14 @@ void CollectReferences(const Expr& expr, RefKind kind, std::vector<Reference>& o
       CollectReferences(*bin.rhs, kind, out);
       return;
     }
+    case ExprKind::CALL: {
+      // Every argument is evaluated for dependence purposes, so all references
+      // in all branches count (a superset of what a lazy select reads).
+      for (const auto& arg : static_cast<const CallExpr&>(expr).args) {
+        CollectReferences(*arg, kind, out);
+      }
+      return;
+    }
   }
 }
 
@@ -182,7 +204,7 @@ void LowerStmt(const Stmt& stmt, PIRKernel& kernel) {
       level.lower = ExtractAffine(*red.lower);
       level.upper = ExtractAffine(*red.upper);
       // A reduce(op) loop carries a sequential dependency by construction
-      // (specs/04 step 5) — there is no source-level mode keyword for it.
+      // — there is no source-level mode keyword for it.
       level.mode = LoopMode::SEQ;
       kernel.loop_nest.push_back(std::move(level));
       kernel.is_reduction = true;

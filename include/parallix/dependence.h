@@ -30,7 +30,7 @@ inline const char* ToString(Verdict verdict) {
   return "?";
 }
 
-// The result of comparing one pair of references (specs/04, steps 1-4).
+// The result of comparing one pair of references.
 struct PairResult {
   size_t ref_a_index;
   size_t ref_b_index;
@@ -47,7 +47,7 @@ struct DependenceReport {
   std::string verdict_reason;
 };
 
-// Runs the dependence engine (specs/04) over every reference pair in the
+// Runs the dependence engine over every reference pair in the
 // kernel's PIR, then derives the overall verdict (Step 6), folding in the
 // reduction special case (Step 5) via `kernel.is_reduction`.
 DependenceReport AnalyzeDependence(const PIRKernel& kernel);

@@ -17,12 +17,20 @@ const char* ToString(TokenKind kind) {
     case TokenKind::F32: return "F32";
     case TokenKind::F64: return "F64";
     case TokenKind::I32: return "I32";
+    case TokenKind::I64: return "I64";
+    case TokenKind::SELECT: return "SELECT";
     case TokenKind::MIN: return "MIN";
     case TokenKind::MAX: return "MAX";
     case TokenKind::IDENT: return "IDENT";
     case TokenKind::INT_LITERAL: return "INT";
     case TokenKind::FLOAT_LITERAL: return "FLOAT";
     case TokenKind::ASSIGN: return "ASSIGN";
+    case TokenKind::EQ: return "EQ";
+    case TokenKind::NE: return "NE";
+    case TokenKind::LT: return "LT";
+    case TokenKind::LE: return "LE";
+    case TokenKind::GT: return "GT";
+    case TokenKind::GE: return "GE";
     case TokenKind::PLUS_ASSIGN: return "PLUS_ASSIGN";
     case TokenKind::PLUS: return "PLUS";
     case TokenKind::MINUS: return "MINUS";
@@ -51,6 +59,7 @@ const std::unordered_map<std::string, TokenKind>& Keywords() {
       {"seq", TokenKind::SEQ},             {"reduce", TokenKind::REDUCE},
       {"in", TokenKind::IN},               {"f32", TokenKind::F32},
       {"f64", TokenKind::F64},             {"i32", TokenKind::I32},
+      {"i64", TokenKind::I64},             {"select", TokenKind::SELECT},
       {"min", TokenKind::MIN},             {"max", TokenKind::MAX},
   };
   return kKeywords;
@@ -163,7 +172,19 @@ Token Lexer::NextToken() {
       return MakeToken(TokenKind::MINUS, "-", line, column);
     case '*': return MakeToken(TokenKind::STAR, "*", line, column);
     case '/': return MakeToken(TokenKind::SLASH, "/", line, column);
-    case '=': return MakeToken(TokenKind::ASSIGN, "=", line, column);
+    case '=':
+      if (Match('=')) return MakeToken(TokenKind::EQ, "==", line, column);
+      return MakeToken(TokenKind::ASSIGN, "=", line, column);
+    case '!':
+      if (Match('=')) return MakeToken(TokenKind::NE, "!=", line, column);
+      throw LexError("unexpected character '!' at line " + std::to_string(line) + ", column " +
+                     std::to_string(column) + ": did you mean '!='?");
+    case '<':
+      if (Match('=')) return MakeToken(TokenKind::LE, "<=", line, column);
+      return MakeToken(TokenKind::LT, "<", line, column);
+    case '>':
+      if (Match('=')) return MakeToken(TokenKind::GE, ">=", line, column);
+      return MakeToken(TokenKind::GT, ">", line, column);
     case '.':
       if (Match('.')) return MakeToken(TokenKind::DOTDOT, "..", line, column);
       throw LexError("unexpected character '.' at line " + std::to_string(line) +

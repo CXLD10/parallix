@@ -9,7 +9,7 @@
 
 namespace parallix {
 
-// Thrown on a token sequence that does not match the grammar in specs/02.
+// Thrown on a token sequence that does not match the grammar.
 // This is a syntax error, distinct from a semantic error (see sema.h) — T5
 // and T6 parse successfully and only fail later, in semantic analysis.
 class ParseError : public std::runtime_error {
@@ -21,7 +21,7 @@ class Parser {
  public:
   explicit Parser(std::vector<Token> tokens);
 
-  // Parses the full token stream per specs/02's grammar. Throws ParseError
+  // Parses the full token stream's grammar. Throws ParseError
   // on the first token sequence that cannot be reduced by the grammar.
   Program ParseProgram();
 
@@ -51,6 +51,7 @@ class Parser {
   LoopMode ToLoopMode(TokenKind kind) const;
 
   ExprPtr ParseExpr();
+  ExprPtr ParseSum();
   ExprPtr ParseTerm();
   ExprPtr ParseFactor();
   std::unique_ptr<VarRefExpr> ParseLValue();

@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cstdio>
+#include <cstdlib>
 #include <sys/wait.h>
 
 namespace parallix {
@@ -33,13 +34,51 @@ bool LooksLikeMissingCompiler(int exit_code, const std::string& output) {
 
 }  // namespace
 
+int RunCommand(const std::string& cmd, std::string* output) { return RunCaptured(cmd, output); }
+
+CompileResult CompileC(const std::string& source_path, const std::string& binary_path,
+                       const std::string& extra_flags, bool want_openmp) {
+  CompileResult result;
+  const char* candidates[] = {"cc", "gcc"};
+  bool tried_any = false;
+  for (const char* compiler : candidates) {
+    for (int attempt = 0; attempt < (want_openmp ? 2 : 1); ++attempt) {
+      bool openmp = want_openmp && attempt == 0;
+      const char* env_flags = std::getenv("PARALLIX_CFLAGS");  // e.g. sanitizers for generated code
+      std::string cmd = std::string(compiler) + " -O2 -fwrapv " + (openmp ? "-fopenmp " : "") +
+                        extra_flags + " " + (env_flags ? env_flags : "") + " \"" + source_path + "\" -o \"" + binary_path + "\" -lm";
+      std::string output;
+      int code = RunCaptured(cmd, &output);
+      if (LooksLikeMissingCompiler(code, output) && output.find("error") == std::string::npos) {
+        break;  // this compiler is not installed
+      }
+      tried_any = true;
+      result.compiler = compiler;
+      result.output = output;
+      if (code == 0) {
+        result.ok = true;
+        result.openmp = openmp;
+        std::string ver;
+        RunCaptured(std::string(compiler) + " --version | head -1", &ver);
+        while (!ver.empty() && (ver.back() == '\n' || ver.back() == '\r')) ver.pop_back();
+        result.version = ver;
+        return result;
+      }
+    }
+    if (tried_any) break;
+  }
+  result.error = tried_any ? "compilation failed with '" + result.compiler + "':\n" + result.output
+                           : "no C compiler found on PATH: tried cc, gcc";
+  return result;
+}
+
 CompileRunResult CompileAndRun(const std::string& source_path, const std::string& binary_path) {
   CompileRunResult result;
 
   const char* candidates[] = {"cc", "gcc"};
   for (const char* compiler : candidates) {
     std::string cmd =
-        std::string(compiler) + " -fopenmp \"" + source_path + "\" -o \"" + binary_path + "\" -lm";
+        std::string(compiler) + " -O2 -fwrapv -fopenmp \"" + source_path + "\" -o \"" + binary_path + "\" -lm";
     std::string output;
     int exit_code = RunCaptured(cmd, &output);
     if (LooksLikeMissingCompiler(exit_code, output)) {

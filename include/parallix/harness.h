@@ -9,7 +9,7 @@
 
 namespace parallix {
 
-// First working version of proof-carrying verification (specs/06 section 4):
+// First working version of proof-carrying verification:
 // a small, deterministic, self-contained C program (includes + the
 // already-generated function definitions + a `main`) that either certifies
 // agreement between the sequential and OpenMP variants, or runs a

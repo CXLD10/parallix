@@ -2,6 +2,6 @@
 
 namespace parallix {
 
-const char* version() { return "0.1.0-phase1"; }
+const char* version() { return "1.0.0"; }
 
 }  // namespace parallix

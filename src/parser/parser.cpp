@@ -103,8 +103,10 @@ TypeNode Parser::ParseType() {
     type.base = TypeBase::F64;
   } else if (Check(TokenKind::I32)) {
     type.base = TypeBase::I32;
+  } else if (Check(TokenKind::I64)) {
+    type.base = TypeBase::I64;
   } else {
-    Error("expected a base type (f32, f64, i32), but found " + std::string(ToString(Peek().kind)) +
+    Error("expected a base type (f32, f64, i32, i64), but found " + std::string(ToString(Peek().kind)) +
           " ('" + Peek().lexeme + "') at line " + std::to_string(Peek().line));
   }
   Advance();
@@ -255,7 +257,39 @@ std::unique_ptr<VarRefExpr> Parser::ParseLValue() {
   return ref;
 }
 
+// expr := sum (cmp sum)?   -- comparisons are non-associative: `a < b < c` is a
+// parse error, write `(a < b) < c` if that is really meant.
 ExprPtr Parser::ParseExpr() {
+  ExprPtr lhs = ParseSum();
+  BinaryOp op;
+  switch (Peek().kind) {
+    case TokenKind::EQ: op = BinaryOp::EQ; break;
+    case TokenKind::NE: op = BinaryOp::NE; break;
+    case TokenKind::LT: op = BinaryOp::LT; break;
+    case TokenKind::LE: op = BinaryOp::LE; break;
+    case TokenKind::GT: op = BinaryOp::GT; break;
+    case TokenKind::GE: op = BinaryOp::GE; break;
+    default: return lhs;
+  }
+  const Token& op_tok = Advance();
+  auto cmp = std::make_unique<BinaryExpr>();
+  cmp->line = op_tok.line;
+  cmp->column = op_tok.column;
+  cmp->op = op;
+  cmp->lhs = std::move(lhs);
+  cmp->rhs = ParseSum();
+  switch (Peek().kind) {
+    case TokenKind::EQ: case TokenKind::NE: case TokenKind::LT:
+    case TokenKind::LE: case TokenKind::GT: case TokenKind::GE:
+      Error("[E_CHAINED_COMPARISON] comparisons do not chain: found '" + Peek().lexeme +
+            "' after a comparison at line " + std::to_string(Peek().line) +
+            "; parenthesize one side explicitly");
+    default: break;
+  }
+  return cmp;
+}
+
+ExprPtr Parser::ParseSum() {
   ExprPtr lhs = ParseTerm();
   while (Check(TokenKind::PLUS) || Check(TokenKind::MINUS)) {
     const Token& op_tok = Advance();
@@ -289,6 +323,27 @@ ExprPtr Parser::ParseTerm() {
 // The IDENT and lvalue alternatives collapse into one case here: a bare
 // IDENT is just a VarRefExpr with no subscripts.
 ExprPtr Parser::ParseFactor() {
+  if ((Check(TokenKind::SELECT) || Check(TokenKind::MIN) || Check(TokenKind::MAX)) &&
+      Peek(1).kind == TokenKind::LPAREN) {
+    const Token& name_tok = Advance();
+    auto call = std::make_unique<CallExpr>();
+    call->line = name_tok.line;
+    call->column = name_tok.column;
+    call->callee = name_tok.kind == TokenKind::SELECT ? CallKind::SELECT
+                   : name_tok.kind == TokenKind::MIN  ? CallKind::MIN
+                                                      : CallKind::MAX;
+    Advance();  // '('
+    call->args.push_back(ParseExpr());
+    while (Match(TokenKind::COMMA)) call->args.push_back(ParseExpr());
+    Expect(TokenKind::RPAREN, "to close the call to '" + name_tok.lexeme + "'");
+    size_t want = call->callee == CallKind::SELECT ? 3 : 2;
+    if (call->args.size() != want) {
+      Error("[E_CALL_ARITY] " + name_tok.lexeme + "(...) takes " + std::to_string(want) +
+            " arguments but " + std::to_string(call->args.size()) + " were given at line " +
+            std::to_string(name_tok.line));
+    }
+    return call;
+  }
   if (Check(TokenKind::IDENT)) {
     return ParseLValue();
   }

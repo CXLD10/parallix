@@ -30,16 +30,15 @@ PairResult AnalyzePair(const std::vector<Reference>& refs, size_t ia, size_t ib)
 
   bool both_writes = (a.kind == RefKind::WRITE && b.kind == RefKind::WRITE);
   // For a write/read pair, always compare as (write, read) so the distance
-  // formula (specs/04 step 3: distance = b1 - b2, write's offset minus
-  // read's offset) has a fixed, well-defined meaning.
+  // formula has a fixed, well-defined meaning.
   size_t idx_w1 = (a.kind == RefKind::WRITE) ? ia : ib;
   size_t idx_w2_or_read = (a.kind == RefKind::WRITE) ? ib : ia;
   const Reference& write_ref = refs[idx_w1];
   const Reference& other_ref = refs[idx_w2_or_read];
 
-  // Step 2 — GCD test, per dimension (the same algorithm as the 1-D case in
-  // specs/04, generalized by requiring every dimension to admit a solution —
-  // ruling out any single dimension rules out the whole pair).
+  // Step 2 — GCD test, per dimension (the classic 1-D test, generalized
+  // by requiring every dimension to admit a solution — ruling out any single
+  // dimension rules out the whole pair).
   size_t dims = write_ref.access.size();
   std::ostringstream gcd_trace;
   for (size_t d = 0; d < dims; ++d) {
@@ -83,7 +82,7 @@ PairResult AnalyzePair(const std::vector<Reference>& refs, size_t ia, size_t ib)
     distance_note = "no varying dimension -> loop-independent";
   } else if (distinct_indices.size() > 1) {
     distance_note = "dependence spans more than one loop index across dimensions "
-                     "(out of Phase 1's distance-computation scope)";
+                     "(outside the distance computation)";
   } else {
     size_t d = varying_dims.front();
     long long a1 = write_ref.access[d].coefficient;
@@ -98,8 +97,8 @@ PairResult AnalyzePair(const std::vector<Reference>& refs, size_t ia, size_t ib)
     } else {
       distance_note = "non-unit coefficient(s) in dimension " + std::to_string(d) + " (a1=" +
                        std::to_string(a1) + ", a2=" + std::to_string(a2) +
-                       ") -> distance/direction unknown (documented Phase 1 simplification, "
-                       "specs/04 step 3)";
+                       ") -> distance/direction unknown (documented simplification: "
+                       "only unit coefficients get a distance)";
     }
   }
 
@@ -145,9 +144,56 @@ DependenceReport AnalyzeDependence(const PIRKernel& kernel) {
     }
   }
 
+  // A single write reference conflicts with *itself* across iterations of the
+  // parallelized (outermost) loop whenever no subscript dimension depends on
+  // that loop's index: two different outer iterations then write the same
+  // element. Pairwise comparison alone never sees this (a reference is not
+  // paired with itself), e.g. `C[0] = A[i]` or `C[j] = A[i, j]` under loop i.
+  if (!kernel.loop_nest.empty()) {
+    const std::string& outer = kernel.loop_nest.front().index_var;
+    for (size_t i = 0; i < refs.size(); ++i) {
+      if (refs[i].kind != RefKind::WRITE) continue;
+      bool uses_outer = false;
+      for (const AccessFunction& acc : refs[i].access) {
+        if (acc.coefficient != 0 && acc.index_var == outer) uses_outer = true;
+      }
+      if (uses_outer) continue;
+      PairResult pr;
+      pr.ref_a_index = i;
+      pr.ref_b_index = i;
+      pr.dependent = true;
+      pr.type = DependenceType::WAW;
+      pr.reasoning = "write to '" + refs[i].array_name + "' does not depend on the outermost loop "
+                      "index '" + outer + "', so different iterations of '" + outer +
+                      "' write the same element -> loop-carried output dependence (WAW)";
+      report.pairs.push_back(pr);
+    }
+  }
+
+  // A pair that agrees in some dimension on the parallelized loop's own index
+  // (same nonzero coefficient, same offset) can share an element only within a
+  // single iteration of that loop: equality in that dimension forces equal
+  // iterations. Such a pair cannot conflict across iterations.
+  auto within_one_iteration = [&](const PairResult& pr) {
+    if (kernel.loop_nest.empty() || pr.ref_a_index == pr.ref_b_index) return false;
+    const std::string& outer = kernel.loop_nest.front().index_var;
+    const Reference& ra = refs[pr.ref_a_index];
+    const Reference& rb = refs[pr.ref_b_index];
+    if (ra.array_name != rb.array_name) return false;
+    for (size_t d = 0; d < ra.access.size(); ++d) {
+      const AccessFunction& x = ra.access[d];
+      const AccessFunction& y = rb.access[d];
+      if (x.coefficient != 0 && x.coefficient == y.coefficient && x.index_var == outer &&
+          y.index_var == outer && x.constant == y.constant) {
+        return true;
+      }
+    }
+    return false;
+  };
+
   bool any_unsafe = false;
   for (const auto& pr : report.pairs) {
-    if (pr.dependent && pr.type != DependenceType::NONE) {
+    if (pr.dependent && pr.type != DependenceType::NONE && !within_one_iteration(pr)) {
       any_unsafe = true;
       break;
     }

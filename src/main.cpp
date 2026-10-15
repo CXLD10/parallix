@@ -1,299 +1,423 @@
+#include <unistd.h>
+
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <map>
+#include <set>
 #include <sstream>
 
-#include "parallix/ast.h"
-#include "parallix/codegen.h"
+#include "parallix/bench.h"
+#include "parallix/certcheck.h"
+#include "parallix/certificate.h"
 #include "parallix/compiler_driver.h"
-#include "parallix/dependence.h"
-#include "parallix/harness.h"
-#include "parallix/lexer.h"
-#include "parallix/lowering.h"
-#include "parallix/parser.h"
-#include "parallix/schedule.h"
-#include "parallix/sema.h"
+#include "parallix/explain.h"
+#include "parallix/hardware.h"
+#include "parallix/pipeline.h"
+#include "parallix/render.h"
+#include "parallix/verify.h"
+#include "parallix/version.h"
+#include "parallix/witness.h"
 
-// The CLI driver: lex -> parse -> sema -> lower to PIR -> dependence analysis
-// -> schedule -> codegen -> compile+run -> certificate, printing exactly the
-// output contract in specs/05-phase1-plan.md (Phase 1 sections) and
-// specs/06-phase2-plan.md section 5 (Phase 2 sections).
+// The parallix command-line driver. Subcommands:
+//   analyze, explain, run, verify, bench, check-cert, demo
+// `parallix file.plx` with no subcommand analyzes and then verifies the file.
 
 namespace parallix {
 namespace {
 
-std::string RenderTokens(const std::vector<Token>& tokens) {
-  std::ostringstream out;
-  bool first = true;
-  for (const Token& tok : tokens) {
-    if (tok.kind == TokenKind::END_OF_FILE) continue;
-    if (!first) out << " ";
-    first = false;
-    out << ToString(tok.kind);
-    if (tok.kind == TokenKind::IDENT || tok.kind == TokenKind::INT_LITERAL ||
-        tok.kind == TokenKind::FLOAT_LITERAL) {
-      out << "(" << tok.lexeme << ")";
-    }
+const char* kUsage =
+    "parallix " "1.0.0" " -- an affine-loop compiler that certifies its own parallelization verdicts\n"
+    "\n"
+    "usage: parallix <command> [options]\n"
+    "  analyze    <file.plx>              lex, parse, check, analyze dependences, choose a schedule\n"
+    "  explain    <file.plx>              why each loop was (not) parallelized; writes an HTML report\n"
+    "  run        <file.plx>              compile and execute the chosen schedule at --size\n"
+    "  verify     <file.plx>              adversarial validation (safe kernels) or counterexample (unsafe)\n"
+    "  bench      <file.plx>              median timings, sequential vs parallel; table, CSV, SVG chart\n"
+    "  check-cert <cert.json>             independently re-check a certificate\n"
+    "  demo                               guided two-part demonstration (see demo.sh)\n"
+    "\n"
+    "common options:\n"
+    "  --out DIR            where generated C, certificates and reports go (default: generated)\n"
+    "  --size N             problem size for the cost model / run (default: 10000)\n"
+    "  --scalar NAME=VALUE  value for a scalar kernel parameter (repeatable)\n"
+    "verify options:   --sizes a,b,c  --seeds a,b,c  --threads a,b,c  --reps R  --perms P  --no-tsan  --force-parallel\n"
+    "bench options:    --sizes a,b,c  --threads a,b,c  --reps R (>=5)\n"
+    "check-cert:       --source FILE  also compare against the on-disk source\n";
+
+struct Args {
+  std::string command;
+  std::vector<std::string> positional;
+  std::map<std::string, std::string> opt;
+  std::vector<std::pair<std::string, double>> scalars;
+  bool Has(const std::string& k) const { return opt.count(k) != 0; }
+  std::string Get(const std::string& k, const std::string& d = "") const {
+    auto it = opt.find(k);
+    return it == opt.end() ? d : it->second;
   }
-  return out.str();
+};
+
+bool IsFlag(const std::string& k) {
+  static const std::set<std::string> flags = {"--no-tsan", "--force-parallel", "--fast", "--help", "--version"};
+  return flags.count(k) != 0;
 }
 
-std::string RenderExpr(const Expr& expr) {
-  switch (expr.kind) {
-    case ExprKind::INT_LITERAL:
-      return std::to_string(static_cast<const IntLiteralExpr&>(expr).value);
-    case ExprKind::VAR_REF: {
-      const auto& ref = static_cast<const VarRefExpr&>(expr);
-      if (ref.subscripts.empty()) return ref.name;
-      std::ostringstream out;
-      out << ref.name << "[";
-      for (size_t i = 0; i < ref.subscripts.size(); ++i) {
-        if (i > 0) out << ", ";
-        out << RenderExpr(*ref.subscripts[i]);
+bool ParseArgs(int argc, char** argv, Args* a, std::string* err) {
+  for (int i = 1; i < argc; ++i) {
+    std::string t = argv[i];
+    if (t.rfind("--", 0) == 0) {
+      if (IsFlag(t)) {
+        a->opt[t] = "1";
+        continue;
       }
-      out << "]";
-      return out.str();
-    }
-    case ExprKind::BINARY: {
-      const auto& bin = static_cast<const BinaryExpr&>(expr);
-      return RenderExpr(*bin.lhs) + " " + ToString(bin.op) + " " + RenderExpr(*bin.rhs);
-    }
-  }
-  return "<?>";
-}
-
-std::string RenderType(const TypeNode& type) {
-  std::ostringstream out;
-  out << ToString(type.base);
-  if (!type.dims.empty()) {
-    out << "[";
-    for (size_t i = 0; i < type.dims.size(); ++i) {
-      if (i > 0) out << ", ";
-      const Dim& dim = type.dims[i];
-      out << (dim.is_ident ? dim.ident : std::to_string(dim.int_value));
-    }
-    out << "]";
-  }
-  return out.str();
-}
-
-std::string RenderStmt(const Stmt& stmt) {
-  switch (stmt.kind) {
-    case StmtKind::LOOP: {
-      const auto& loop = static_cast<const LoopStmt&>(stmt);
-      std::ostringstream out;
-      out << ToString(loop.mode) << " " << loop.index_var << " in " << RenderExpr(*loop.lower)
-          << ".." << RenderExpr(*loop.upper) << " { ";
-      for (size_t i = 0; i < loop.body.size(); ++i) {
-        if (i > 0) out << "; ";
-        out << RenderStmt(*loop.body[i]);
+      if (i + 1 >= argc) {
+        *err = "option " + t + " needs a value";
+        return false;
       }
-      out << " }";
-      return out.str();
-    }
-    case StmtKind::REDUCTION: {
-      const auto& red = static_cast<const ReductionStmt&>(stmt);
-      std::ostringstream out;
-      out << "reduce(" << ToString(red.op) << ") " << red.index_var << " in "
-          << RenderExpr(*red.lower) << ".." << RenderExpr(*red.upper) << " { ";
-      for (size_t i = 0; i < red.body.size(); ++i) {
-        if (i > 0) out << "; ";
-        out << RenderStmt(*red.body[i]);
+      std::string v = argv[++i];
+      if (t == "--scalar") {
+        size_t eq = v.find('=');
+        if (eq == std::string::npos) {
+          *err = "--scalar expects NAME=VALUE";
+          return false;
+        }
+        a->scalars.push_back({v.substr(0, eq), std::atof(v.c_str() + eq + 1)});
+      } else {
+        a->opt[t] = v;
       }
-      out << " }";
-      return out.str();
-    }
-    case StmtKind::ASSIGN: {
-      const auto& assign = static_cast<const AssignStmt&>(stmt);
-      return RenderExpr(*assign.lvalue) + " " + ToString(assign.op) + " " +
-             RenderExpr(*assign.rhs);
+    } else if (a->command.empty()) {
+      a->command = t;
+    } else {
+      a->positional.push_back(t);
     }
   }
-  return "<?>";
+  return true;
 }
 
-std::string RenderKernel(const KernelDecl& kernel) {
-  std::ostringstream out;
-  out << "kernel " << kernel.name << "(";
-  for (size_t i = 0; i < kernel.params.size(); ++i) {
-    if (i > 0) out << ", ";
-    out << kernel.params[i].name << ": " << RenderType(kernel.params[i].type);
+template <typename T>
+std::vector<T> ParseList(const std::string& s) {
+  std::vector<T> out;
+  std::istringstream in(s);
+  std::string tok;
+  while (std::getline(in, tok, ',')) {
+    if (!tok.empty()) out.push_back(static_cast<T>(std::stoll(tok)));
   }
-  out << ") -> " << kernel.ret.name << ": " << RenderType(kernel.ret.type) << " { ";
-  for (size_t i = 0; i < kernel.body.size(); ++i) {
-    if (i > 0) out << "; ";
-    out << RenderStmt(*kernel.body[i]);
-  }
-  out << " }";
-  return out.str();
+  return out;
 }
 
-std::string RenderAccessFunction(const AccessFunction& access) {
-  if (access.index_var.empty()) return std::to_string(access.constant);
-  std::ostringstream out;
-  if (access.coefficient == 1) {
-    out << access.index_var;
-  } else if (access.coefficient == -1) {
-    out << "-" << access.index_var;
-  } else {
-    out << access.coefficient << "*" << access.index_var;
-  }
-  if (access.constant > 0) out << " + " << access.constant;
-  if (access.constant < 0) out << " - " << -access.constant;
-  return out.str();
+std::string OutDir(const Args& a) {
+  std::string d = a.Get("--out", "generated");
+  std::filesystem::create_directories(d);
+  return d;
 }
 
-std::string RenderReference(const Reference& ref) {
-  std::ostringstream out;
-  out << ref.array_name << "[";
-  for (size_t i = 0; i < ref.access.size(); ++i) {
-    if (i > 0) out << ", ";
-    out << RenderAccessFunction(ref.access[i]);
-  }
-  out << "](" << ToString(ref.kind) << ")";
-  return out.str();
+bool WriteFile(const std::string& path, const std::string& text) {
+  std::ofstream out(path);
+  out << text;
+  return static_cast<bool>(out);
 }
 
-void RunKernel(const KernelDecl& kernel_ast, const std::vector<Token>& tokens) {
-  std::cout << "TOKENS: " << RenderTokens(tokens) << "\n";
-  std::cout << "AST: " << RenderKernel(kernel_ast) << "\n";
-
-  Sema sema;
-  try {
-    sema.AnalyzeKernel(kernel_ast);
-  } catch (const SemaError& e) {
-    std::cout << "SEMANTIC ERROR: " << e.what() << "\n";
-    return;
+// Parses `path`; prints the stage error and returns false on failure.
+bool Load(const std::string& path, ParsedSource* parsed) {
+  std::string error;
+  if (!ParseSourceFile(path, parsed, &error)) {
+    std::cerr << error << "\n";
+    return false;
   }
-  std::cout << "SEMANTIC INFO: kernel '" << kernel_ast.name
-            << "' passed affine-boundedness, shape, reduction-validation, and "
-               "symbol-resolution checks (specs/02, rules 1-4).\n";
+  return true;
+}
 
-  PIRKernel pir = LowerKernel(kernel_ast);
-
+void PrintAnalysis(const ParsedSource& parsed, const Analysis& a, const HardwareInfo& hw, long long size) {
+  std::cout << "TOKENS: " << RenderTokens(parsed.tokens) << "\n";
+  std::cout << "AST: " << RenderKernel(a.kernel) << "\n";
+  std::cout << "SEMANTIC INFO: kernel '" << a.kernel.name
+            << "' passed affine-boundedness, shape, reduction-validation, symbol-resolution and "
+               "assignment-target checks.\n";
   std::ostringstream loops;
-  loops << pir.loop_nest.size() << " loop" << (pir.loop_nest.size() == 1 ? "" : "s");
-  if (!pir.loop_nest.empty()) {
+  loops << a.pir.loop_nest.size() << " loop" << (a.pir.loop_nest.size() == 1 ? "" : "s");
+  if (!a.pir.loop_nest.empty()) {
     loops << " -- ";
-    for (size_t i = 0; i < pir.loop_nest.size(); ++i) {
-      if (i > 0) loops << "; ";
-      const LoopLevel& level = pir.loop_nest[i];
-      loops << level.index_var << " (" << ToString(level.mode) << ") in ["
-            << level.lower.ToString() << ", " << level.upper.ToString() << ")";
+    for (size_t i = 0; i < a.pir.loop_nest.size(); ++i) {
+      const LoopLevel& lv = a.pir.loop_nest[i];
+      loops << (i ? "; " : "") << lv.index_var << " (" << ToString(lv.mode) << ") in [" << lv.lower.ToString()
+            << ", " << lv.upper.ToString() << ")";
     }
   }
   std::cout << "LOOP ANALYSIS: " << loops.str() << "\n";
-
-  DependenceReport report = AnalyzeDependence(pir);
   std::ostringstream dep;
-  if (report.pairs.empty()) {
+  if (a.report.pairs.empty()) {
     dep << "no array reference pairs to compare";
-    if (pir.is_reduction) {
-      dep << " (the only reduction-related dependency is on the scalar accumulator '"
-          << pir.reduce_accumulator << "', which is not a PIR array reference; see Step 5)";
+    if (a.pir.is_reduction) {
+      dep << " (the only reduction-related dependency is on the scalar accumulator '" << a.pir.reduce_accumulator << "')";
     }
   } else {
-    dep << "comparing " << report.pairs.size() << " reference pair(s): ";
-    for (size_t i = 0; i < report.pairs.size(); ++i) {
-      if (i > 0) dep << "; ";
-      const PairResult& pr = report.pairs[i];
-      dep << RenderReference(pir.references[pr.ref_a_index]) << " vs "
-          << RenderReference(pir.references[pr.ref_b_index]) << ": " << pr.reasoning;
+    dep << "comparing " << a.report.pairs.size() << " reference pair(s): ";
+    for (size_t i = 0; i < a.report.pairs.size(); ++i) {
+      const PairResult& pr = a.report.pairs[i];
+      dep << (i ? "; " : "") << RenderReference(a.pir.references[pr.ref_a_index]);
+      if (pr.ref_a_index != pr.ref_b_index) dep << " vs " << RenderReference(a.pir.references[pr.ref_b_index]);
+      dep << ": " << pr.reasoning;
     }
   }
   std::cout << "DEPENDENCE ANALYSIS: " << dep.str() << "\n";
-
-  std::cout << "PARALLELIZATION: " << ToString(report.verdict) << ", " << report.verdict_reason
-            << "\n";
-
-  // --- Phase 2: schedule -> codegen -> harness -> compile+run -> certificate.
-  Schedule schedule = GenerateSchedule(pir, report);
-  std::cout << "SCHEDULE: " << ToString(schedule.kind) << " -- " << schedule.reason << "\n";
-
-  CodegenResult gen = GenerateCCode(kernel_ast, pir, schedule);
-  HarnessResult harness = GenerateHarness(kernel_ast, pir, schedule, gen);
-
-  std::filesystem::create_directories("generated");
-  std::string c_path = "generated/" + kernel_ast.name + "_test.c";
-  std::string bin_path = "generated/" + kernel_ast.name + "_test";
-  {
-    std::ofstream out(c_path);
-    out << harness.c_source;
+  std::cout << "PARALLELIZATION: " << ToString(a.report.verdict) << ", " << a.report.verdict_reason << "\n";
+  std::cout << "SCHEDULE: " << ToString(a.schedule.kind) << " -- " << a.schedule.reason << "\n";
+  if (a.schedule.kind != ScheduleKind::SEQUENTIAL_ONLY) {
+    Profitability p = EstimateProfitability(a.kernel, a.pir, a.schedule, hw, DimsForSize(a.gen.dim_params, size));
+    std::cout << "COST MODEL: " << p.reason << "\n";
   }
-  std::cout << "GENERATED CODE: " << c_path << " (compiles to " << bin_path << ")\n";
+}
 
-  CompileRunResult cr = CompileAndRun(c_path, bin_path);
-  std::ostringstream exec;
-  if (!cr.error.empty()) {
-    exec << "FAILED -- " << cr.error;
-  } else if (cr.ran) {
-    exec << "compiled with '" << cr.compiler_used << "' and ran successfully (exit code "
-         << cr.exit_code << ")";
-  } else {
-    exec << "compiled but did not run";
+// Calls `fn` for every kernel in the file; semantic errors are printed and counted.
+template <typename Fn>
+int ForEachKernel(const std::string& path, Fn fn) {
+  ParsedSource parsed;
+  if (!Load(path, &parsed)) return 1;
+  int status = 0;
+  for (KernelDecl& k : parsed.program.kernels) {
+    Analysis a;
+    std::string error;
+    if (!AnalyzeKernelDecl(std::move(k), &a, &error)) {
+      std::cout << "TOKENS: " << RenderTokens(parsed.tokens) << "\n";
+      std::cout << "SEMANTIC ERROR: " << error << "\n";
+      status = 2;
+      continue;
+    }
+    status = std::max(status, fn(parsed, a));
   }
-  std::cout << "EXECUTION: " << exec.str() << "\n";
+  return status;
+}
 
-  std::ostringstream cert;
-  if (schedule.kind == ScheduleKind::SEQUENTIAL_ONLY) {
-    cert << "not attempted - UNSAFE";
-  } else if (!cr.error.empty() || cr.exit_code != 0) {
-    cert << "not obtained -- execution did not complete successfully";
-  } else {
-    size_t pos = cr.run_output.find("CERTIFICATE");
-    if (pos == std::string::npos) {
-      cert << "not found in program output (harness ran but printed no certificate line)";
+int DoAnalyze(const Args& a) {
+  if (a.positional.empty()) { std::cerr << "usage: parallix analyze <file.plx>\n"; return 1; }
+  HardwareInfo hw = DetectHardware();
+  long long size = std::stoll(a.Get("--size", "10000"));
+  return ForEachKernel(a.positional[0], [&](const ParsedSource& p, const Analysis& an) {
+    PrintAnalysis(p, an, hw, size);
+    return 0;
+  });
+}
+
+int DoExplain(const Args& a) {
+  if (a.positional.empty()) { std::cerr << "usage: parallix explain <file.plx>\n"; return 1; }
+  HardwareInfo hw = DetectHardware();
+  long long size = std::stoll(a.Get("--size", "10000"));
+  std::string dir = OutDir(a);
+  return ForEachKernel(a.positional[0], [&](const ParsedSource& p, const Analysis& an) {
+    Explanation e = Explain(an, hw, size);
+    std::cout << ExplainText(e);
+    std::string path = a.Get("--html", dir + "/" + an.kernel.name + ".explain.html");
+    WriteFile(path, ExplainHtml(e, p.text));
+    std::cout << "\nHTML REPORT: " << path << "\n";
+    return 0;
+  });
+}
+
+int DoRun(const Args& a) {
+  if (a.positional.empty()) { std::cerr << "usage: parallix run <file.plx>\n"; return 1; }
+  HardwareInfo hw = DetectHardware();
+  long long size = std::stoll(a.Get("--size", "10000"));
+  std::string dir = OutDir(a);
+  return ForEachKernel(a.positional[0], [&](const ParsedSource&, const Analysis& an) {
+    Profitability p;
+    bool par = false;
+    int threads = 1;
+    if (an.schedule.kind != ScheduleKind::SEQUENTIAL_ONLY) {
+      p = EstimateProfitability(an.kernel, an.pir, an.schedule, hw, DimsForSize(an.gen.dim_params, size));
+      par = p.profitable;
+      threads = p.threads;
+    }
+    if (a.Has("--threads")) { threads = std::stoi(a.Get("--threads")); par = threads > 1 && an.schedule.kind != ScheduleKind::SEQUENTIAL_ONLY; }
+    std::cout << "VERDICT: " << ToString(an.report.verdict) << "\n";
+    if (an.schedule.kind == ScheduleKind::SEQUENTIAL_ONLY) {
+      std::cout << "RUN: sequential (loop is not safe to parallelize)\n";
+    } else if (par) {
+      std::cout << "RUN: parallel on " << threads << " threads -- " << p.reason << "\n";
     } else {
-      // The harness's own stdout already starts its line with "CERTIFICATE:
-      // ..." (or "CERTIFICATE MISMATCH: ..."); strip that so the CLI's own
-      // "CERTIFICATE: " label isn't doubled.
-      size_t end = cr.run_output.find('\n', pos);
-      std::string line = cr.run_output.substr(pos, end == std::string::npos ? std::string::npos
-                                                                             : end - pos);
-      size_t colon = line.find(':');
-      std::string rest = colon == std::string::npos ? line : line.substr(colon + 1);
-      size_t first_non_space = rest.find_first_not_of(' ');
-      cert << (first_non_space == std::string::npos ? rest : rest.substr(first_non_space));
+      std::cout << "RUN: sequential -- " << (a.Has("--threads") ? "1 thread requested" : p.reason) << "\n";
+    }
+    BuiltHarness h = BuildHarness(an, an.gen, an.schedule, dir, an.kernel.name + "_run");
+    if (!h.compile.ok) { std::cout << "EXECUTION: FAILED -- " << h.compile.error << "\n"; return 3; }
+    std::string cmd = "\"" + h.bin_path + "\" run --size " + std::to_string(size) + " --threads " + std::to_string(threads);
+    if (!par) cmd += " --no-par";
+    for (const auto& [n, v] : a.scalars) { std::ostringstream o; o << v; cmd += " --scalar " + n + "=" + o.str(); }
+    std::string out;
+    int code = RunCommand(cmd, &out);
+    for (const PlxLine& l : ParsePlxOutput(out)) {
+      if (l.kind == "run") {
+        std::cout << "EXECUTION: " << l.Get("variant") << " variant, " << l.Get("team") << " thread(s), size " << l.Get("size")
+                  << ", " << l.Get("seconds") << " s\n";
+      }
+    }
+    std::istringstream in(out);
+    std::string line;
+    while (std::getline(in, line)) if (line.rfind("PLX result ", 0) == 0) std::cout << "RESULT: " << line.substr(11) << "\n";
+    return code == 0 ? 0 : 3;
+  });
+}
+
+ValidationOptions MakeValidationOptions(const Args& a, const std::string& dir) {
+  ValidationOptions v;
+  v.work_dir = dir;
+  if (a.Has("--sizes")) v.sizes = ParseList<int>(a.Get("--sizes"));
+  if (a.Has("--seeds")) v.seeds = ParseList<unsigned>(a.Get("--seeds"));
+  if (a.Has("--threads")) v.threads = ParseList<int>(a.Get("--threads"));
+  if (a.Has("--reps")) v.reps = std::stoi(a.Get("--reps"));
+  if (a.Has("--perms")) v.perms = std::stoi(a.Get("--perms"));
+  v.tsan = !a.Has("--no-tsan");
+  v.scalars = a.scalars;
+  return v;
+}
+
+int DoVerify(const Args& a, bool with_analysis) {
+  if (a.positional.empty()) { std::cerr << "usage: parallix verify <file.plx>\n"; return 1; }
+  HardwareInfo hw = DetectHardware();
+  std::string dir = OutDir(a);
+  long long size = std::stoll(a.Get("--size", "10000"));
+  return ForEachKernel(a.positional[0], [&](const ParsedSource& p, const Analysis& an) {
+    if (with_analysis) PrintAnalysis(p, an, hw, size);
+    else std::cout << "VERDICT: " << ToString(an.report.verdict) << " -- " << an.report.verdict_reason << "\n";
+    CertificateInput in;
+    in.source_path = a.positional[0];
+    in.source_text = p.text;
+    in.analysis = &an;
+    in.hardware = hw;
+    ValidationReport vr;
+    RefutationReport rr;
+    int status = 0;
+    std::string text;
+    if (an.report.verdict == Verdict::UNSAFE) {
+      RefutationOptions ro;
+      ro.work_dir = dir;
+      ro.force_parallel = a.Has("--force-parallel");
+      ro.scalars = a.scalars;
+      if (a.Has("--reps")) ro.forced_reps = std::stoi(a.Get("--reps"));
+      std::cout << "SCHEDULE: " << ToString(an.schedule.kind) << " -- no parallel code is generated for this kernel\n";
+      rr = RunRefutation(an, ro);
+      text = FormatRefutation(an, rr);
+      in.refutation = &rr;
+      if (!rr.Refuted()) status = 4;
+    } else {
+      vr = RunValidation(an, MakeValidationOptions(a, dir));
+      std::cout << "GENERATED CODE: " << dir << "/" << an.kernel.name << "_harness.c\n";
+      if (vr.built) {
+        std::cout << "EXECUTION: compiled with '" << vr.compiler << "' (" << vr.compiler_version << "), OpenMP "
+                  << (vr.openmp ? "enabled" : "NOT available") << "\n";
+      }
+      text = FormatValidation(an, vr);
+      in.validation = &vr;
+      if (!vr.Passed()) status = 4;
+    }
+    std::string cert_path = a.Get("--cert", dir + "/" + an.kernel.name + ".cert.json");
+    WriteFile(cert_path, BuildCertificateJson(in));
+    std::cout << "CERTIFICATE FILE: " << cert_path << "\n";
+    std::cout << text;  // ends with the CERTIFICATE line
+    return status;
+  });
+}
+
+int DoBench(const Args& a) {
+  if (a.positional.empty()) { std::cerr << "usage: parallix bench <file.plx> --sizes ... --threads ...\n"; return 1; }
+  HardwareInfo hw = DetectHardware();
+  std::string dir = OutDir(a);
+  return ForEachKernel(a.positional[0], [&](const ParsedSource&, const Analysis& an) {
+    BenchOptions bo;
+    bo.work_dir = dir;
+    if (a.Has("--sizes")) bo.sizes = ParseList<long long>(a.Get("--sizes"));
+    if (a.Has("--threads")) bo.threads = ParseList<int>(a.Get("--threads"));
+    if (a.Has("--reps")) bo.reps = std::stoi(a.Get("--reps"));
+    bo.scalars = a.scalars;
+    BenchResult r = RunBench(an, bo, hw);
+    if (!r.ok) { std::cout << "BENCH FAILED: " << r.error << "\n"; return 3; }
+    std::cout << BenchTable(r);
+    std::string base = dir + "/" + an.kernel.name + ".bench";
+    WriteFile(base + ".csv", BenchCsv(r));
+    WriteFile(base + ".svg", BenchSvg(r));
+    std::cout << "CSV: " << base << ".csv\nCHART: " << base << ".svg\n";
+    for (const BenchRow& row : r.rows) if (!row.check_ok) { std::cout << "WARNING: a parallel result differed from sequential\n"; return 4; }
+    return 0;
+  });
+}
+
+int DoCheckCert(const Args& a) {
+  if (a.positional.empty()) { std::cerr << "usage: parallix check-cert <cert.json> [--source file.plx]\n"; return 1; }
+  std::ifstream in(a.positional[0]);
+  if (!in) { std::cerr << "error: could not open '" << a.positional[0] << "'\n"; return 1; }
+  std::ostringstream buf;
+  buf << in.rdbuf();
+  std::string src_text;
+  const std::string* src = nullptr;
+  if (a.Has("--source")) {
+    std::ifstream s(a.Get("--source"));
+    if (!s) { std::cerr << "error: could not open '" << a.Get("--source") << "'\n"; return 1; }
+    std::ostringstream sb;
+    sb << s.rdbuf();
+    src_text = sb.str();
+    src = &src_text;
+  }
+  CertCheckResult r = CheckCertificate(buf.str(), src);
+  for (const std::string& p : r.passed) std::cout << "  ok    " << p << "\n";
+  for (const std::string& f : r.failures) std::cout << "  FAIL  " << f << "\n";
+  for (const std::string& n : r.notes) std::cout << "  note  " << n << "\n";
+  std::cout << (r.ok ? "CERTIFICATE VALID" : "CERTIFICATE INVALID") << "\n";
+  return r.ok ? 0 : 5;
+}
+
+int DoDemo(const Args& a, char** argv) {
+  (void)argv;
+  std::vector<std::string> candidates;
+  if (const char* home = std::getenv("PARALLIX_HOME")) candidates.push_back(std::string(home) + "/demo.sh");
+  candidates.push_back("demo.sh");
+  candidates.push_back("../demo.sh");
+  char exe[4096];
+  ssize_t n = readlink("/proc/self/exe", exe, sizeof exe - 1);
+  if (n > 0) {
+    exe[n] = 0;
+    std::filesystem::path bin = exe;
+    candidates.push_back((bin.parent_path() / "../share/parallix/demo.sh").string());
+    candidates.push_back((bin.parent_path().parent_path() / "demo.sh").string());
+    candidates.push_back((bin.parent_path().parent_path().parent_path() / "demo.sh").string());
+  }
+  for (const std::string& c : candidates) {
+    if (std::filesystem::exists(c)) {
+      std::string cmd = "bash \"" + c + "\"" + (a.Has("--fast") ? " --fast" : "");
+      return std::system(cmd.c_str()) == 0 ? 0 : 1;
     }
   }
-  std::cout << "CERTIFICATE: " << cert.str() << "\n";
+  std::cerr << "demo.sh not found; run it from the repository root, or set PARALLIX_HOME\n";
+  return 1;
 }
 
 }  // namespace
 }  // namespace parallix
 
 int main(int argc, char** argv) {
-  if (argc < 2) {
-    std::cerr << "usage: parallix <file.plx>\n";
-    return 1;
-  }
-
-  std::ifstream in(argv[1]);
-  if (!in) {
-    std::cerr << "error: could not open '" << argv[1] << "'\n";
-    return 1;
-  }
-  std::ostringstream buf;
-  buf << in.rdbuf();
-  std::string source = buf.str();
-
+  using namespace parallix;
+  Args a;
+  std::string err;
+  if (!ParseArgs(argc, argv, &a, &err)) { std::cerr << "error: " << err << "\n" << kUsage; return 1; }
+  if (a.Has("--version") || a.command == "version") { std::cout << "parallix " << version() << "\n"; return 0; }
+  if (a.command.empty() || a.Has("--help") || a.command == "help") { std::cout << kUsage; return a.command.empty() && !a.Has("--help") ? 1 : 0; }
+  if (a.Has("--version") || a.command == "version") { std::cout << "parallix " << version() << "\n"; return 0; }
   try {
-    parallix::Lexer lexer(source);
-    std::vector<parallix::Token> tokens = lexer.Tokenize();
-
-    parallix::Parser parser(tokens);
-    parallix::Program program = parser.ParseProgram();
-
-    for (const parallix::KernelDecl& kernel : program.kernels) {
-      parallix::RunKernel(kernel, tokens);
+    if (a.command == "analyze") return DoAnalyze(a);
+    if (a.command == "explain") return DoExplain(a);
+    if (a.command == "run") return DoRun(a);
+    if (a.command == "verify") return DoVerify(a, false);
+    if (a.command == "bench") return DoBench(a);
+    if (a.command == "check-cert") return DoCheckCert(a);
+    if (a.command == "demo") return DoDemo(a, argv);
+    // Legacy form: `parallix file.plx` analyzes and verifies.
+    if (a.command.size() > 4 && a.command.substr(a.command.size() - 4) == ".plx") {
+      a.positional.insert(a.positional.begin(), a.command);
+      return DoVerify(a, true);
     }
-  } catch (const parallix::LexError& e) {
-    std::cerr << "lex error: " << e.what() << "\n";
-    return 1;
-  } catch (const parallix::ParseError& e) {
-    std::cerr << "parse error: " << e.what() << "\n";
+  } catch (const std::exception& e) {
+    std::cerr << "error: " << e.what() << "\n";
     return 1;
   }
-
-  return 0;
+  std::cerr << "unknown command '" << a.command << "'\n" << kUsage;
+  return 1;
 }

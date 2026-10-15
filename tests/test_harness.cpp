@@ -40,41 +40,34 @@ HarnessResult HarnessForFile(const std::string& path) {
 
 }  // namespace
 
-TEST(Harness, T1ExactEqualityCertificate) {
+TEST(Harness, MapKernelComparesExactlyAndHasAllCommands) {
   HarnessResult h = HarnessForFile("examples/t1_vector_add.plx");
   EXPECT_TRUE(h.attempts_certificate);
-  EXPECT_NE(h.c_source.find("!="), std::string::npos);
-  EXPECT_NE(h.c_source.find("CERTIFICATE: vector_add STATICALLY SAFE, EMPIRICALLY CORROBORATED"),
-            std::string::npos);
-  EXPECT_NE(h.c_source.find("vector_add_seq("), std::string::npos);
+  EXPECT_NE(h.c_source.find("plx_cmd_validate"), std::string::npos);
+  EXPECT_NE(h.c_source.find("plx_cmd_refute"), std::string::npos);
+  EXPECT_NE(h.c_source.find("plx_cmd_bench"), std::string::npos);
+  EXPECT_NE(h.c_source.find("vector_add_ord("), std::string::npos);
   EXPECT_NE(h.c_source.find("vector_add_par("), std::string::npos);
+  EXPECT_NE(h.c_source.find("[k] != got->C[k]"), std::string::npos);
+  EXPECT_EQ(h.c_source.find("1e-4 * den"), std::string::npos);
 }
 
-TEST(Harness, T4ExactEqualityCertificate) {
-  HarnessResult h = HarnessForFile("examples/t4_stencil5.plx");
-  EXPECT_TRUE(h.attempts_certificate);
-  EXPECT_NE(h.c_source.find("!="), std::string::npos);
-  EXPECT_NE(h.c_source.find("CERTIFICATE: stencil5 STATICALLY SAFE, EMPIRICALLY CORROBORATED"),
-            std::string::npos);
-}
-
-TEST(Harness, T3EpsilonRelativeToleranceCertificate) {
+TEST(Harness, FloatSumReductionUsesRelativeTolerance) {
   HarnessResult h = HarnessForFile("examples/t3_reduce_sum.plx");
-  EXPECT_TRUE(h.attempts_certificate);
-  EXPECT_NE(h.c_source.find("rel"), std::string::npos);
+  EXPECT_NE(h.c_source.find("1e-4 * den"), std::string::npos);
   EXPECT_NE(h.c_source.find("fabs"), std::string::npos);
-  EXPECT_NE(h.c_source.find("CERTIFICATE: reduce_sum STATICALLY SAFE, EMPIRICALLY CORROBORATED"),
-            std::string::npos);
-  // No exact "!=" element comparison — reduction uses tolerance, not
-  // bit-exact equality (specs/06 section 4).
-  EXPECT_EQ(h.c_source.find("_seq[idx] !="), std::string::npos);
 }
 
-TEST(Harness, T2UnsafeKernelHasNoCertificateOnlySmokeTest) {
+TEST(Harness, StencilMapIsExact) {
+  HarnessResult h = HarnessForFile("examples/t4_stencil5.plx");
+  EXPECT_NE(h.c_source.find("[k] != got->B[k]"), std::string::npos);
+  EXPECT_EQ(h.c_source.find("1e-4 * den"), std::string::npos);
+}
+
+TEST(Harness, UnsafeKernelHasNoParallelCallButKeepsOrderedVariant) {
   HarnessResult h = HarnessForFile("examples/t2_prefix_like.plx");
   EXPECT_FALSE(h.attempts_certificate);
-  EXPECT_EQ(h.c_source.find("CERTIFICATE"), std::string::npos);
-  EXPECT_NE(h.c_source.find("SMOKE TEST: prefix_like"), std::string::npos);
-  EXPECT_NE(h.c_source.find("prefix_like_seq("), std::string::npos);
-  EXPECT_EQ(h.c_source.find("prefix_like_par"), std::string::npos);
+  EXPECT_EQ(h.c_source.find("prefix_like_par("), std::string::npos);
+  EXPECT_NE(h.c_source.find("prefix_like_ord("), std::string::npos);
+  EXPECT_NE(h.c_source.find("#define PLX_HAS_PAR 0"), std::string::npos);
 }

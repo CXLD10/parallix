@@ -129,8 +129,8 @@ TEST(Parser, T4Stencil5Shape) {
   ASSERT_EQ(assign.lvalue->subscripts.size(), 2u);
 }
 
-// T5 and T6 are syntactically well-formed — only semantic analysis (M3)
-// rejects them. This distinction matters (specs/02) and is tested
+// T5 and T6 are syntactically well-formed — only semantic analysis
+// rejects them. This distinction matters and is tested
 // explicitly here: parsing must succeed for both.
 TEST(Parser, T5NonAffineParsesSuccessfully) {
   EXPECT_NO_THROW({

@@ -18,6 +18,17 @@ add_library(parallix_core
   codegen/codegen.cpp
   harness/harness.cpp
   compiler_driver/compiler_driver.cpp
+  render.cpp
+  sha256.cpp
+  pipeline.cpp
+  verify.cpp
+  witness.cpp
+  json.cpp
+  hardware.cpp
+  bench.cpp
+  explain.cpp
+  certificate.cpp
+  certcheck/certcheck.cpp
 )
 target_include_directories(parallix_core PUBLIC ${CMAKE_SOURCE_DIR}/include)
 

@@ -5,3 +5,5 @@
 TEST(Version, IsNotEmpty) {
   EXPECT_STRNE(parallix::version(), "");
 }
+
+TEST(Version, IsTheReleaseVersion) { EXPECT_STREQ(parallix::version(), "1.0.0"); }
